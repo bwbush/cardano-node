@@ -23,7 +23,7 @@
     customConfig.url = "github:input-output-hk/empty-flake";
 
     CHaP = {
-      url = "github:intersectmbo/cardano-haskell-packages?ref=repo";
+      url = "github:intersectmbo/cardano-haskell-packages?ref=index-only";
       flake = false;
     };
 
