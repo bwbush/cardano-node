@@ -1134,6 +1134,12 @@ instance
       [ "kind" .= String "TraceMempoolSynced"
       , "enclosingTime" .= enclosingValue et
       ]
+  forMachine _dtal (TraceMempoolCapacityChanged before after) =
+    mconcat
+      [ "kind" .= String "TraceMempoolCapacityChanged"
+      , "before" .= String (Text.pack $ show before)
+      , "after" .= String (Text.pack $ show after)
+      ]
   forMachine _dtal TraceMempoolTipMovedBetweenSTMBlocks =
     mconcat
       [ "kind" .= String "TraceMempoolTipMovedBetweenSTMBlocks"
@@ -1167,6 +1173,8 @@ instance
     ]
   asMetrics (TraceMempoolSynced RisingEdge) = []
 
+  asMetrics TraceMempoolCapacityChanged {} = []
+
   asMetrics TraceMempoolSyncNotNeeded {} = []
   asMetrics TraceMempoolAttemptingAdd {} = []
 
@@ -1186,6 +1194,7 @@ instance MetaTrace (TraceEventMempool blk) where
     namespaceFor TraceMempoolRemoveTxs {} = Namespace [] ["RemoveTxs"]
     namespaceFor TraceMempoolManuallyRemovedTxs {} = Namespace [] ["ManuallyRemovedTxs"]
     namespaceFor TraceMempoolSynced {} = Namespace [] ["Synced"]
+    namespaceFor TraceMempoolCapacityChanged {} = Namespace [] ["CapacityChanged"]
     namespaceFor TraceMempoolSyncNotNeeded {} = Namespace [] ["SyncNotNeeded"]
     namespaceFor TraceMempoolAttemptingAdd {} = Namespace [] ["AttemptAdd"]
     namespaceFor TraceMempoolTipMovedBetweenSTMBlocks {} = Namespace [] ["TipMovedBetweenSTMBlocks"]
@@ -1195,6 +1204,7 @@ instance MetaTrace (TraceEventMempool blk) where
     severityFor (Namespace _ ["RejectedTx"]) _ = Just Info
     severityFor (Namespace _ ["RemoveTxs"]) _ = Just Info
     severityFor (Namespace _ ["Synced"]) _ = Just Debug
+    severityFor (Namespace _ ["CapacityChanged"]) _ = Just Info
     severityFor (Namespace _ ["ManuallyRemovedTxs"]) _ = Just Warning
     severityFor (Namespace _ ["SyncNotNeeded"]) _ = Just Debug
     severityFor (Namespace _ ["AttemptAdd"]) _ = Just Debug
@@ -1254,6 +1264,7 @@ instance MetaTrace (TraceEventMempool blk) where
       , Namespace [] ["RemoveTxs"]
       , Namespace [] ["ManuallyRemovedTxs"]
       , Namespace [] ["Synced"]
+      , Namespace [] ["CapacityChanged"]
       , Namespace [] ["SyncNotNeeded"]
       , Namespace [] ["AttemptAdd"]
       , Namespace [] ["TipMovedBetweenSTMBlocks"]
