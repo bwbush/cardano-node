@@ -1810,6 +1810,13 @@ instance MetaTrace (LedgerDB.TraceEvent blk) where
 instance ( StandardHash blk
          , ConvertRawHash blk)
          => LogFormatting (LedgerDB.TraceSnapshotEvent blk) where
+  forHuman (LedgerDB.ConfiguredSnapshotPolicy info) =
+    Text.unwords $
+      [ "Configured ledger snapshot policy:", showT info ]
+      <> [ "(policy mismatches: " <> showT mismatches <> ")"
+         | let mismatches = LedgerDB.snapshotPolicyMismatches info
+         , not (null mismatches)
+         ]
   forHuman (LedgerDB.SnapshotRequestDelayed _snapshotRequestTime delayBeforeSnapshotting slots) =
     Text.unwords [ "Scheduling to take ledger state snapshots at slots "
                  , showT (NonEmpty.toList slots)
@@ -1855,6 +1862,11 @@ instance ( StandardHash blk
              " Snapshot was created for a different backend. Convert it with `snapshot-converter`."
         _ -> ""
 
+  forMachine _dtals (LedgerDB.ConfiguredSnapshotPolicy info) =
+    mconcat [ "kind" .= String "ConfiguredSnapshotPolicy"
+            , "policy" .= String (showT info)
+            , "mismatches" .= toJSON (map show (LedgerDB.snapshotPolicyMismatches info))
+            ]
   forMachine _dtals (LedgerDB.SnapshotRequestDelayed snapshotRequestTime delayBeforeSnapshotting slots) =
     mconcat [ "kind" .= String "SnapshotRequestDelayed"
             , "requestTime" .= show snapshotRequestTime
@@ -1879,12 +1891,17 @@ instance ( StandardHash blk
             , "failure" .= show failure ]
 
 instance MetaTrace (LedgerDB.TraceSnapshotEvent blk) where
+    namespaceFor (LedgerDB.ConfiguredSnapshotPolicy info)
+      | null (LedgerDB.snapshotPolicyMismatches info) = Namespace [] ["ConfiguredSnapshotPolicy"]
+      | otherwise = Namespace [] ["ImplausibleSnapshotPolicy"]
     namespaceFor LedgerDB.SnapshotRequestDelayed {} = Namespace [] ["SnapshotRequestDelayed"]
     namespaceFor LedgerDB.SnapshotRequestCompleted {} = Namespace [] ["SnapshotRequestCompleted"]
     namespaceFor LedgerDB.TookSnapshot {} = Namespace [] ["TookSnapshot"]
     namespaceFor LedgerDB.DeletedSnapshot {} = Namespace [] ["DeletedSnapshot"]
     namespaceFor LedgerDB.InvalidSnapshot {} = Namespace [] ["InvalidSnapshot"]
 
+    severityFor  (Namespace _ ["ConfiguredSnapshotPolicy"]) _ = Just Info
+    severityFor  (Namespace _ ["ImplausibleSnapshotPolicy"]) _ = Just Warning
     severityFor  (Namespace _ ["SnapshotRequestDelayed"]) _ = Just Debug
     severityFor  (Namespace _ ["SnapshotRequestCompleted"]) _ = Just Debug
     severityFor  (Namespace _ ["TookSnapshot"]) _ = Just Info
@@ -1892,6 +1909,13 @@ instance MetaTrace (LedgerDB.TraceSnapshotEvent blk) where
     severityFor  (Namespace _ ["InvalidSnapshot"]) _ = Just Error
     severityFor _ _ = Nothing
 
+    documentFor (Namespace _ ["ConfiguredSnapshotPolicy"]) = Just
+        "The snapshot policy the ledger database was opened with."
+    documentFor (Namespace _ ["ImplausibleSnapshotPolicy"]) = Just $ mconcat
+         [ "The snapshot policy the ledger database was opened with, where the"
+         , " write delay or the rate limit is at least as long as the interval"
+         , " between snapshots."
+         ]
     documentFor (Namespace _ ["TookSnapshot"]) = Just $ mconcat
          [ "A snapshot is being written to disk. Two events will be traced, one"
          , " for when the node starts taking the snapshot and another one for"
@@ -1911,7 +1935,9 @@ instance MetaTrace (LedgerDB.TraceSnapshotEvent blk) where
     documentFor _ = Nothing
 
     allNamespaces =
-      [ Namespace [] ["TookSnapshot"]
+      [ Namespace [] ["ConfiguredSnapshotPolicy"]
+      , Namespace [] ["ImplausibleSnapshotPolicy"]
+      , Namespace [] ["TookSnapshot"]
       , Namespace [] ["DeletedSnapshot"]
       , Namespace [] ["InvalidSnapshot"]
       , Namespace [] ["SnapshotRequestDelayed"]
