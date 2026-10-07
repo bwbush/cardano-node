@@ -131,7 +131,8 @@ library
                       , cardano-node
                       , cardano-prelude
                       , cardano-strict-containers >=0.1
-                      , hermod-tracing-api:public
+                      , contra-tracer
+                    , hermod-tracing-api:public
                       , cborg >= 0.2.2 && < 0.3
                       , containers
                       , constraints-extras

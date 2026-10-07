@@ -28,7 +28,7 @@ import           Testnet.Process.RunIO (liftIOAnnotated)
 import qualified Hedgehog.Extras.Stock.IO.Network.Socket as IO
 import qualified Hedgehog.Extras.Stock.IO.Network.Sprocket as IO
 
-import           Hermod.Tracing.API.Tracer (nullTracer)
+import           Control.Tracer (nullTracer)
 
 type TestnetMagic = Word32
 
