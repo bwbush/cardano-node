@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE PackageImports #-}
 
 module Cardano.Tracer.Acceptors.Server
   ( runAcceptorsServer
@@ -41,7 +42,7 @@ import           System.Metrics.Network.Acceptor (acceptMetricsResp)
 
 import           Hermod.Tracing (TraceObject)
 import qualified Hermod.Tracing as Net
-import           Hermod.Tracing.API.Tracer (nullTracer)
+import           "contra-tracer" Control.Tracer (nullTracer)
 import qualified Trace.Forward.Configuration.DataPoint as DPF
 import qualified Trace.Forward.Configuration.TraceObject as TF
 import           Trace.Forward.Run.DataPoint.Acceptor (acceptDataPointsResp)

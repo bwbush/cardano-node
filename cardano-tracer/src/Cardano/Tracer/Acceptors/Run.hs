@@ -1,4 +1,5 @@
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE PackageImports #-}
 
 module Cardano.Tracer.Acceptors.Run
   ( runAcceptors
@@ -19,7 +20,7 @@ import qualified System.Metrics.Configuration as EKGF
 import qualified System.Metrics.ReqResp as EKGF
 
 import           Hermod.Tracing (TraceObject)
-import           Hermod.Tracing.API.Tracer (Tracer, contramap, nullTracer, stdoutTracer)
+import           "contra-tracer" Control.Tracer (Tracer, contramap, nullTracer, stdoutTracer)
 import           Hermod.Tracing.Utils (runInLoop)
 import qualified Trace.Forward.Configuration.DataPoint as DPF
 import qualified Trace.Forward.Configuration.TraceObject as TOF

@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE PackageImports #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -57,7 +58,7 @@ import           System.Metrics.Network.Forwarder
 
 import           Hermod.Tracing (DetailLevel (..), HowToConnect, SeverityS (..), TraceObject (..))
 import qualified Hermod.Tracing as Net
-import           Hermod.Tracing.API.Tracer as Contra (contramap, nullTracer, stdoutTracer,
+import           "contra-tracer" Control.Tracer as Contra (contramap, nullTracer, stdoutTracer,
                    traceWith)
 import           Hermod.Tracing.Utils (runInLoop)
 import qualified Trace.Forward.Configuration.DataPoint as DPF
