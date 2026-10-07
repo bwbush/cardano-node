@@ -1,6 +1,7 @@
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE PackageImports #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -53,7 +54,7 @@ import           System.Metrics.Network.Forwarder
 
 import           Hermod.Tracing (ForwarderMode (..), HowToConnect (..), TraceObject (..),
                    TraceOptionForwarder (..), Verbosity (..))
-import           Hermod.Tracing.API.Tracer (Tracer, contramap, nullTracer, stdoutTracer)
+import           "contra-tracer" Control.Tracer (Tracer, contramap, nullTracer, stdoutTracer)
 import           Hermod.Tracing.Utils (runInLoop)
 import qualified Trace.Forward.Configuration.DataPoint as DPF
 import qualified Trace.Forward.Configuration.TraceObject as TF

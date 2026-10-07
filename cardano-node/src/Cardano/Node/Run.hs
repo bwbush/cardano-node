@@ -135,6 +135,7 @@ import           Control.Monad.IO.Class (MonadIO (..))
 import           Control.Monad.Trans.Except (ExceptT, runExceptT)
 import           Control.Monad.Trans.Except.Extra (left, hushM)
 import           Control.Monad.Trans.Maybe (MaybeT(runMaybeT, MaybeT), hoistMaybe)
+import qualified Control.Tracer as CT
 import           Hermod.Tracing.API.Tracer
 import           Data.Bits
 import           Data.Bifunctor (first)
@@ -230,7 +231,7 @@ handleNodeWithTracers cmdPc nc (SomeConsensusProtocol blockType runP) shelleyGen
   let fp = maybe  "No file path found!"
                   unConfigPath
                   (getLast (pncConfigFile cmdPc))
-  blockForging <- mkBlockForging nullTracer
+  blockForging <- mkBlockForging CT.nullTracer
   tracers <-
     initTraceDispatcher
       nc
@@ -289,7 +290,7 @@ handleSimpleNode
   => Api.BlockType blk
   -> Api.GenesisHashShelley
   -> ProtocolInfo blk
-  -> (Tracer IO KESAgentClientTrace -> IO [MkBlockForging IO blk])
+  -> (CT.Tracer IO KESAgentClientTrace -> IO [MkBlockForging IO blk])
   -> Tracers RemoteAddress LocalAddress blk IO
   -> NodeConfiguration
   -> PartialNodeConfiguration
@@ -575,7 +576,7 @@ handleSimpleNode blockType shelleyGenesisHash pInfo mkBlockForging tracers nc cm
 
 -- | The P2P SIGHUP handler can update block forging, reconfigure network topology and restart gRPC.
 installSigHUPHandler :: Tracer IO (StartupTrace blk)
-                     -> Tracer IO KESAgentClientTrace
+                     -> CT.Tracer IO KESAgentClientTrace
                      -> Api.BlockType blk
                      -> NodeConfiguration
                      -> PartialNodeConfiguration -- ^ original CLI configuration
@@ -617,7 +618,7 @@ installSigHUPHandler startupTracer kesAgentTracer blockType nc cmdPc networkMagi
 
 #ifdef UNIX
 updateBlockForging :: Tracer IO (StartupTrace blk)
-                   -> Tracer IO KESAgentClientTrace
+                   -> CT.Tracer IO KESAgentClientTrace
                    -> Api.BlockType blk
                    -> NodeKernel IO RemoteAddress (ConnectionId LocalAddress) blk
                    -> NodeConfiguration
@@ -761,7 +762,7 @@ updateLedgerPeerSnapshot startupTracer NodeConfiguration { ncConsensusMode } net
 -- to prevent an infinite restart loop.
 -- The user can re-enable by sending SIGHUP to reload the configuration.
 rpcServerLoop :: Tracer IO (StartupTrace blk)
-              -> Tracer IO TraceRpc
+              -> CT.Tracer IO TraceRpc
               -> StrictTVar IO RpcConfig
               -> NetworkMagic
               -> IORef (Maybe NodeKernelAccess)
