@@ -88,6 +88,7 @@ library
                         Cardano.Node.Tracing
                         Cardano.Node.Tracing.API
                         Cardano.Node.Tracing.Cdf
+                        Cardano.Node.Tracing.Configured
                         Cardano.Node.Tracing.Consistency
                         Cardano.Node.Tracing.DefaultTraceConfig
                         Cardano.Node.Tracing.Documentation
@@ -98,7 +99,6 @@ library
                         Cardano.Node.Tracing.NodeInfo
                         Cardano.Node.Tracing.NodeStartupInfo
                         Cardano.Node.Tracing.Render
-                        Cardano.Node.Tracing.TransactionLogging
                         Cardano.Node.Tracing.StateRep
                         Cardano.Node.Tracing.Tracers
                         Cardano.Node.Tracing.Tracers.BlockReplayProgress
@@ -116,6 +116,8 @@ library
                         Cardano.Node.Tracing.Tracers.Shutdown
                         Cardano.Node.Tracing.Tracers.HasIssuer
                         Cardano.Node.Tracing.Tracers.Startup
+                        Cardano.Node.Tracing.Tracers.TransactionSubmission
+                        Cardano.Node.Tracing.TransactionLogging
                         Cardano.Node.Types
 
   other-modules:        Paths_cardano_node
@@ -226,6 +228,23 @@ test-suite transaction-logging-test
                       , bytestring
                       , text
   other-modules:        Cardano.Node.Tracing.TransactionLogging
+
+-- Keep formatter integration tests independent of unrelated node fixtures.
+test-suite transaction-logging-integration
+  import:               project-config
+  hs-source-dirs:       test/transaction-logging-integration test
+  main-is:              Main.hs
+  type:                 exitcode-stdio-1.0
+  build-depends:        base
+                      , aeson
+                      , bytestring
+                      , cardano-node
+                      , hedgehog
+                      , ouroboros-network:{framework, protocols, ouroboros-network}
+                      , text
+                      , trace-dispatcher
+                      , typed-protocols
+  other-modules:        Test.Cardano.Tracing.NewTracing.TransactionLogging
 
 test-suite cardano-node-test
   import:               project-config

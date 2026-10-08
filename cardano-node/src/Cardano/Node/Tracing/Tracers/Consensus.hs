@@ -27,17 +27,20 @@ module Cardano.Node.Tracing.Tracers.Consensus
   , txsMempoolTimeoutSoftCounterName
   , txsSyncDurationTotalCounterName
   , impliesMempoolTimeoutSoft
+  , formatMempoolWith
+  , formatLocalTxSubmissionWith
   ) where
 
 
 import qualified Cardano.KESAgent.Processes.ServiceClient as Agent
-import           Cardano.Logging
+import           Cardano.Logging hiding (detail)
 import           Cardano.Node.Queries (ConvertTxId (..), HasKESInfo (..))
 import qualified Cardano.Node.Tracing.Cdf as Cdf
 import           Cardano.Node.Tracing.Era.Byron ()
 import           Cardano.Node.Tracing.Era.Shelley ()
 import           Cardano.Node.Tracing.Formatting ()
 import           Cardano.Node.Tracing.Render
+import           Cardano.Node.Tracing.TransactionLogging
 import           Cardano.Node.Tracing.Tracers.ConsensusStartupException ()
 import           Cardano.Protocol.TPraos.OCert (KESPeriod (..))
 import           Cardano.Slotting.Slot (WithOrigin (..))
@@ -1076,6 +1079,96 @@ impliesMempoolTimeoutSoft = \case
       MempoolRejectedByLedger -> False
   _ -> False
 
+-- | The legacy instance below and the configured tracer share one formatter.
+formatMempoolWith
+  :: ( LogFormatting (ApplyTxErr blk)
+  , LogFormatting (GenTx blk)
+  , HasTxId (GenTx blk)
+  , Show (GenTxId blk)
+  , ConvertTxId blk
+  , LedgerSupportsMempool blk
+  , ConvertRawHash blk
+  ) => TransactionLogOptions -> DetailLevel -> TraceEventMempool blk -> Aeson.Object
+formatMempoolWith opts = formatMempoolUsing
+  (\dtal tx -> transactionObject opts (renderTxId $ txId tx) (forMachine dtal tx))
+  (fullTxIdsField opts "txsRemovedFull" . map renderTxId)
+
+-- Keep the legacy instance's constraints unchanged: only the configured path
+-- requires extracting an ID from a transaction.
+formatMempoolUsing
+  :: ( LogFormatting (ApplyTxErr blk)
+     , ConvertTxId blk
+     , LedgerSupportsMempool blk
+     , ConvertRawHash blk
+     )
+  => (DetailLevel -> GenTx blk -> Aeson.Object)
+  -> ([GenTxId blk] -> Aeson.Object)
+  -> DetailLevel -> TraceEventMempool blk -> Aeson.Object
+formatMempoolUsing renderTx fullIds dtal event = case event of
+  TraceMempoolAddedTx tx _mpSzBefore mpSzAfter ->
+    mconcat
+      [ "kind" .= String "TraceMempoolAddedTx"
+      , "tx" .= formatTx (txForgetValidated tx)
+      , "mempoolSize" .= forMachine dtal mpSzAfter
+      ]
+  TraceMempoolRejectedTx tx txApplyErr details mpSz ->
+    mconcat $
+      [ "kind" .= String "TraceMempoolRejectedTx"
+      , "tx" .= formatTx tx
+      , "mempoolSize" .= forMachine dtal mpSz
+      ] <>
+      if dtal < DDetailed then [] else
+      [ "err" .= forMachine dtal txApplyErr
+      , "errdetails" .= jsonMempoolRejectionDetails details
+      ]
+  TraceMempoolRemoveTxs txs mpSz ->
+    mconcat
+      [ "kind" .= String "TraceMempoolRemoveTxs"
+      , "txs" .= map (\(tx, err) -> Aeson.object $
+          [ "tx" .= formatTx (txForgetValidated tx) ] <>
+          [ "err" .= forMachine dtal err | dtal >= DDetailed ]) txs
+      , "mempoolSize" .= forMachine dtal mpSz
+      ]
+  TraceMempoolManuallyRemovedTxs txs0 txs1 mpSz ->
+    mconcat
+      [ "kind" .= String "TraceMempoolManuallyRemovedTxs"
+      , "txsRemoved" .= map (String . renderTxIdForDetails dtal) (toList txs0)
+      , "txsInvalidated" .= map (formatTx . txForgetValidated) txs1
+      , "mempoolSize" .= forMachine dtal mpSz
+      ] <> fullIds (toList txs0)
+  TraceMempoolSyncNotNeeded t ->
+    mconcat
+      [ "kind" .= String "TraceMempoolSyncNotNeeded"
+      , "tip" .= forMachine dtal t
+      ]
+  TraceMempoolAttemptingAdd tx ->
+    mconcat
+      [ "kind" .= String "TraceMempoolAttemptingAdd"
+      , "tx" .= formatTx tx
+      ]
+  TraceMempoolSynced et ->
+    mconcat
+      [ "kind" .= String "TraceMempoolSynced"
+      , "enclosingTime" .= enclosingValue et
+      ]
+  TraceMempoolTipMovedBetweenSTMBlocks ->
+    "kind" .= String "TraceMempoolTipMovedBetweenSTMBlocks"
+  TraceMempoolCapacityChanged capBefore capAfter ->
+    mconcat
+      [ "kind" .= String "TraceMempoolCapacityChanged"
+      , "capacityBytesBefore" .= unByteSize32 (txMeasureByteSize capBefore)
+      , "capacityBytesAfter" .= unByteSize32 (txMeasureByteSize capAfter)
+      ]
+  where
+    formatTx = renderTx dtal
+
+formatLocalTxSubmissionWith
+  :: (ConvertTxId blk, HasTxId (GenTx blk))
+  => TransactionLogOptions -> DetailLevel -> TraceLocalTxSubmissionServerEvent blk -> Aeson.Object
+formatLocalTxSubmissionWith opts detail event@(TraceReceivedTx tx) =
+  forMachine detail event <>
+    (if fullTxIds opts then "txIdFull" .= renderTxId (txId tx) else mempty)
+
 instance
   ( LogFormatting (ApplyTxErr blk)
   , LogFormatting (GenTx blk)
@@ -1084,71 +1177,7 @@ instance
   , LedgerSupportsMempool blk
   , ConvertRawHash blk
   ) => LogFormatting (TraceEventMempool blk) where
-  forMachine dtal (TraceMempoolAddedTx tx _mpSzBefore mpSzAfter) =
-    mconcat
-      [ "kind" .= String "TraceMempoolAddedTx"
-      , "tx" .= forMachine dtal (txForgetValidated tx)
-      , "mempoolSize" .= forMachine dtal mpSzAfter
-      ]
-  forMachine dtal (TraceMempoolRejectedTx tx txApplyErr details mpSz) =
-    mconcat $
-      [ "kind" .= String "TraceMempoolRejectedTx"
-      , "tx" .= forMachine dtal tx
-      , "mempoolSize" .= forMachine dtal mpSz
-      ] <>
-      if dtal < DDetailed then [] else
-      [ "err" .= forMachine dtal txApplyErr
-      , "errdetails" .= jsonMempoolRejectionDetails details
-      ]
-  forMachine dtal (TraceMempoolRemoveTxs txs mpSz) =
-    mconcat
-      [ "kind" .= String "TraceMempoolRemoveTxs"
-      , "txs"
-          .= map
-            ( \(tx, err) ->
-                Aeson.object $
-                  [ "tx" .= forMachine dtal (txForgetValidated tx)
-                  ] <>
-                  [ "err" .= forMachine dtal err
-                  | dtal >= DDetailed
-                  ]
-            )
-            txs
-      , "mempoolSize" .= forMachine dtal mpSz
-      ]
-  forMachine dtal (TraceMempoolManuallyRemovedTxs txs0 txs1 mpSz) =
-    mconcat
-      [ "kind" .= String "TraceMempoolManuallyRemovedTxs"
-      , "txsRemoved" .= map (String . renderTxIdForDetails dtal) (toList txs0)
-      , "txsInvalidated" .= map (forMachine dtal . txForgetValidated) txs1
-      , "mempoolSize" .= forMachine dtal mpSz
-      ]
-  forMachine dtal (TraceMempoolSyncNotNeeded t) =
-    mconcat
-      [ "kind" .= String "TraceMempoolSyncNotNeeded"
-      , "tip" .= forMachine dtal t
-      ]
-  forMachine dtal (TraceMempoolAttemptingAdd tx) =
-    mconcat
-      [ "kind" .= String "TraceMempoolAttemptingAdd"
-      , "tx" .= forMachine dtal tx
-      ]
-
-  forMachine _dtal (TraceMempoolSynced et) =
-    mconcat
-      [ "kind" .= String "TraceMempoolSynced"
-      , "enclosingTime" .= enclosingValue et
-      ]
-  forMachine _dtal TraceMempoolTipMovedBetweenSTMBlocks =
-    mconcat
-      [ "kind" .= String "TraceMempoolTipMovedBetweenSTMBlocks"
-      ]
-  forMachine _dtal (TraceMempoolCapacityChanged capBefore capAfter) =
-    mconcat
-      [ "kind" .= String "TraceMempoolCapacityChanged"
-      , "capacityBytesBefore" .= unByteSize32 (txMeasureByteSize capBefore)
-      , "capacityBytesAfter" .= unByteSize32 (txMeasureByteSize capAfter)
-      ]
+  forMachine = formatMempoolUsing forMachine (const mempty)
 
   asMetrics (TraceMempoolAddedTx _tx _mpSzBefore mpSz) =
     [ IntM "txsInMempool" (fromIntegral $ msNumTxs mpSz)
