@@ -28,6 +28,8 @@ import           Cardano.Node.Tracing.StateRep (NodeState (..))
 import           Cardano.Node.Tracing.Tracers
 import           Cardano.Node.Tracing.Tracers.LedgerMetrics
 import           Cardano.Node.Tracing.Tracers.Resources (startResourceTracer)
+import           Cardano.Node.Tracing.TransactionLogging (TransactionLogOptions,
+                   parseTransactionLogOptions)
 import           Cardano.Node.Types
 import           Ouroboros.Consensus.Ledger.Inspect (LedgerEvent)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (TraceChainSyncClientEvent)
@@ -43,10 +45,12 @@ import           Control.DeepSeq (deepseq)
 import           Control.Exception (SomeException (..))
 import           "contra-tracer" Control.Tracer (traceWith)
 import           "trace-dispatcher" Control.Tracer (nullTracer)
+import           Data.Aeson.Types (parseEither)
 import           Data.Functor.Contravariant ((>$<))
 import qualified Data.Map.Strict as Map
 import           Data.Maybe
 import           Data.Time.Clock (getCurrentTime)
+import qualified Data.Yaml as Yaml
 import           Network.Mux.Trace (TraceLabelPeer (..))
 import           Network.Socket (HostName)
 import           System.Metrics as EKG
@@ -70,11 +74,16 @@ initTraceDispatcher ::
   -> Bool
   -> IO (Tracers RemoteAddress LocalAddress blk  IO)
 initTraceDispatcher nc p networkMagic nodeKernel noBlockForging = do
+  -- Validate before constructing backends. No configuration I/O occurs in a
+  -- per-event formatter, and an invalid policy cannot silently opt out.
+  nodeConfig <- Yaml.decodeFileThrow (unConfigPath $ ncConfigFile nc)
+  txOptions <- either (ioError . userError) pure $
+    parseEither parseTransactionLogOptions nodeConfig
   trConfig <- readConfigurationWithDefault
                 (unConfigPath $ ncConfigFile nc)
                 defaultCardanoConfig
 
-  (kickoffForwarder, kickoffPrometheusSimple, tracers) <- mkTracers trConfig
+  (kickoffForwarder, kickoffPrometheusSimple, tracers) <- mkTracers txOptions trConfig
 
   -- The NodeInfo DataPoint needs to be fully evaluated and stored
   -- before it is queried for the first time by cardano-tracer.
@@ -103,12 +112,13 @@ initTraceDispatcher nc p networkMagic nodeKernel noBlockForging = do
   ledgerMetricsDefaultFreq = if noBlockForging then 0 else 1
 
   mkTracers
-    :: TraceConfig
+    :: TransactionLogOptions
+    -> TraceConfig
     -> IO ( IO ()
           , IO ()
           , Tracers RemoteAddress LocalAddress blk IO
           )
-  mkTracers trConfig = mdo
+  mkTracers txOptions trConfig = mdo
     ekgStore <- EKG.newStore
     EKG.registerGcMetrics ekgStore
     ekgTrace <- ekgTracer trConfig ekgStore
@@ -145,7 +155,8 @@ initTraceDispatcher nc p networkMagic nodeKernel noBlockForging = do
           -- So we use nullTracers to ignore 'TraceObject's and 'DataPoint's.
           pure (Trace nullTracer, Trace nullTracer, pure ())
 
-    tracers <- mkDispatchTracers
+    tracers <- mkDispatchTracersWithTransactionLogging
+      txOptions
       nodeKernel
       stdoutTrace
       fwdTracer

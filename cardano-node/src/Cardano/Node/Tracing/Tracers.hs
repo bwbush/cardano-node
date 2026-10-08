@@ -15,6 +15,7 @@
 
 module Cardano.Node.Tracing.Tracers
   ( mkDispatchTracers
+  , mkDispatchTracersWithTransactionLogging
   ) where
 
 import           Cardano.Logging
@@ -27,8 +28,10 @@ import           Cardano.Node.Protocol.Types (SomeConsensusProtocol)
 import           Cardano.Node.Queries (NodeKernelData)
 import           Cardano.Node.TraceConstraints
 import           Cardano.Node.Tracing
+import           Cardano.Node.Tracing.Configured (ConfiguredTrace (..))
 import           Cardano.Node.Tracing.Consistency (checkNodeTraceConfiguration')
 import           Cardano.Node.Tracing.Formatting ()
+import           Cardano.Node.Tracing.Render (renderTxId)
 import qualified Cardano.Node.Tracing.StateRep as SR
 import           Cardano.Node.Tracing.Tracers.BlockReplayProgress
 import           Cardano.Node.Tracing.Tracers.ChainDB
@@ -42,7 +45,10 @@ import           Cardano.Node.Tracing.Tracers.NodeVersion (getNodeVersion)
 import           Cardano.Node.Tracing.Tracers.Rpc ()
 import           Cardano.Node.Tracing.Tracers.Shutdown ()
 import           Cardano.Node.Tracing.Tracers.Startup ()
+import           Cardano.Node.Tracing.Tracers.TransactionSubmission
+import           Cardano.Node.Tracing.TransactionLogging
 import           Ouroboros.Consensus.Ledger.Inspect (LedgerEvent)
+import           Ouroboros.Consensus.Ledger.SupportsMempool (txId)
 import           Ouroboros.Consensus.MiniProtocol.ChainSync.Client (TraceChainSyncClientEvent)
 import qualified Ouroboros.Consensus.Network.NodeToClient as NodeToClient
 import qualified Ouroboros.Consensus.Network.NodeToClient as NtC
@@ -94,7 +100,32 @@ mkDispatchTracers
   -> SomeConsensusProtocol
   -> IO (Tracers RemoteAddress LocalAddress blk IO)
 
-mkDispatchTracers nodeKernel trBase trForward mbTrEKG trDataPoint trConfig p = do
+mkDispatchTracers = mkDispatchTracersWithTransactionLogging defaultTransactionLogOptions
+
+-- | Opt-in entry point; retain the original exported constructor for callers
+-- that do not need transaction-specific formatting.
+mkDispatchTracersWithTransactionLogging
+  :: forall blk .
+  ( Consensus.RunNode blk
+  , TraceConstraints blk
+  , LogFormatting (LedgerEvent blk)
+  , LogFormatting
+    (TraceLabelPeer
+      (ConnectionId RemoteAddress) (TraceChainSyncClientEvent blk))
+  , LogFormatting (TraceGsmEvent (Tip blk))
+  , MetaTrace (TraceGsmEvent (Tip blk))
+  , ToJSON (HeaderHash blk)
+  )
+  => TransactionLogOptions
+  -> NodeKernelData blk
+  -> Trace IO FormattedMessage
+  -> Trace IO FormattedMessage
+  -> Maybe (Trace IO FormattedMessage)
+  -> Trace IO DataPoint
+  -> TraceConfig
+  -> SomeConsensusProtocol
+  -> IO (Tracers RemoteAddress LocalAddress blk IO)
+mkDispatchTracersWithTransactionLogging txOptions nodeKernel trBase trForward mbTrEKG trDataPoint trConfig p = do
 
     configReflection <- emptyConfigReflection
 
@@ -148,13 +179,13 @@ mkDispatchTracers nodeKernel trBase trForward mbTrEKG trDataPoint trConfig p = d
 
 
     !consensusTr <-
-      mkConsensusTracers configReflection trBase trForward mbTrEKG trDataPoint trConfig nodeKernel
+      mkConsensusTracers txOptions configReflection trBase trForward mbTrEKG trDataPoint trConfig nodeKernel
 
     !nodeToClientTr <-
-      mkNodeToClientTracers configReflection trBase trForward mbTrEKG trDataPoint trConfig
+      mkNodeToClientTracers txOptions configReflection trBase trForward mbTrEKG trDataPoint trConfig
 
     !nodeToNodeTr <-
-      mkNodeToNodeTracers configReflection trBase trForward mbTrEKG trDataPoint trConfig
+      mkNodeToNodeTracers txOptions configReflection trBase trForward mbTrEKG trDataPoint trConfig
 
     !(diffusionTr :: Cardano.Diffusion.CardanoTracers IO) <-
       mkDiffusionTracers configReflection trBase trForward mbTrEKG trDataPoint trConfig
@@ -208,7 +239,8 @@ mkConsensusTracers :: forall blk.
   , MetaTrace (TraceGsmEvent (Tip blk))
   , ToJSON (HeaderHash blk)
   )
-  => ConfigReflection
+  => TransactionLogOptions
+  -> ConfigReflection
   -> Trace IO FormattedMessage
   -> Trace IO FormattedMessage
   -> Maybe (Trace IO FormattedMessage)
@@ -216,7 +248,7 @@ mkConsensusTracers :: forall blk.
   -> TraceConfig
   -> NodeKernelData blk
   -> IO (Consensus.Tracers IO (ConnectionId RemoteAddress) (ConnectionId LocalAddress) blk)
-mkConsensusTracers configReflection trBase trForward mbTrEKG _trDataPoint trConfig _nodeKernel = do
+mkConsensusTracers txOptions configReflection trBase trForward mbTrEKG _trDataPoint trConfig _nodeKernel = do
     !chainSyncClientTr  <- mkCardanoTracer
                 trBase trForward mbTrEKG
                  ["ChainSync", "Client"]
@@ -401,13 +433,17 @@ mkConsensusTracers configReflection trBase trForward mbTrEKG _trDataPoint trConf
       , Consensus.gddTracer = mkTracer $
           traceWith consensusGddTr
       , Consensus.txInboundTracer = mkTracer $
-           traceWith txInboundTr
+          traceWith txInboundTr . ConfiguredTrace (suppressTxBodies txOptions)
+            (formatPeerWith $ formatTxInboundWith txOptions renderTxId)
       , Consensus.txOutboundTracer = mkTracer $
-          traceWith txOutboundTr
+          traceWith txOutboundTr . ConfiguredTrace (suppressTxBodies txOptions)
+            (formatPeerWith $ formatTxOutboundWith txOptions renderTxId txId)
       , Consensus.localTxSubmissionServerTracer = mkTracer $
-          traceWith localTxSubmissionServerTr
+          traceWith localTxSubmissionServerTr . ConfiguredTrace (suppressTxBodies txOptions)
+            (formatLocalTxSubmissionWith txOptions)
       , Consensus.mempoolTracer = mkTracer $
-          traceWith mempoolTr
+          traceWith mempoolTr . ConfiguredTrace (suppressTxBodies txOptions)
+            (formatMempoolWith txOptions)
       , Consensus.forgeTracer =
            mkTracer (\(Consensus.TraceLabelCreds _ x) -> traceWith forgeTr x)
            <>
@@ -438,15 +474,16 @@ mkConsensusTracers configReflection trBase trForward mbTrEKG _trDataPoint trConf
       }
 
 mkNodeToClientTracers :: forall blk.
-     Consensus.RunNode blk
-  => ConfigReflection
+     (Consensus.RunNode blk, TraceConstraints blk)
+  => TransactionLogOptions
+  -> ConfigReflection
   -> Trace IO FormattedMessage
   -> Trace IO FormattedMessage
   -> Maybe (Trace IO FormattedMessage)
   -> Trace IO DataPoint
   -> TraceConfig
   -> IO (NodeToClient.Tracers IO (ConnectionId LocalAddress) blk DeserialiseFailure)
-mkNodeToClientTracers configReflection trBase trForward mbTrEKG _trDataPoint trConfig = do
+mkNodeToClientTracers txOptions configReflection trBase trForward mbTrEKG _trDataPoint trConfig = do
     !chainSyncTr <-
       mkCardanoTracer
         trBase trForward mbTrEKG
@@ -477,7 +514,9 @@ mkNodeToClientTracers configReflection trBase trForward mbTrEKG _trDataPoint trC
       , NtC.tTxMonitorTracer = mkTracer $
           traceWith txMonitorTr
       , NtC.tTxSubmissionTracer = mkTracer $
-          traceWith txSubmissionTr
+          traceWith txSubmissionTr . ConfiguredTrace (suppressTxBodies txOptions)
+            (formatPeerWith $ formatSendRecvWith $
+              formatLocalSubmissionWith txOptions (renderTxId . txId))
       , NtC.tStateQueryTracer = mkTracer $
           traceWith stateQueryTr
       }
@@ -485,14 +524,15 @@ mkNodeToClientTracers configReflection trBase trForward mbTrEKG _trDataPoint trC
 mkNodeToNodeTracers :: forall blk.
   ( Consensus.RunNode blk
   , TraceConstraints blk)
-  => ConfigReflection
+  => TransactionLogOptions
+  -> ConfigReflection
   -> Trace IO FormattedMessage
   -> Trace IO FormattedMessage
   -> Maybe (Trace IO FormattedMessage)
   -> Trace IO DataPoint
   -> TraceConfig
   -> IO (NodeToNode.Tracers IO RemoteAddress blk DeserialiseFailure)
-mkNodeToNodeTracers configReflection trBase trForward mbTrEKG _trDataPoint trConfig = do
+mkNodeToNodeTracers txOptions configReflection trBase trForward mbTrEKG _trDataPoint trConfig = do
 
     !chainSyncTracer <-  mkCardanoTracer
                 trBase trForward mbTrEKG
@@ -554,7 +594,9 @@ mkNodeToNodeTracers configReflection trBase trForward mbTrEKG _trDataPoint trCon
       , NtN.tBlockFetchSerialisedTracer = mkTracer $
           traceWith blockFetchSerialisedTr
       , NtN.tTxSubmission2Tracer = mkTracer $
-          traceWith txSubmission2Tracer
+          traceWith txSubmission2Tracer . ConfiguredTrace (suppressTxBodies txOptions)
+            (formatPeerWith $ formatSendRecvWith $
+              formatTxSubmissionWith txOptions renderTxId txId)
       , NtN.tKeepAliveTracer = mkTracer $
           traceWith keepAliveTracer
       , NtN.tPeerSharingTracer = mkTracer $
