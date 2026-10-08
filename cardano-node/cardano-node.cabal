@@ -98,6 +98,7 @@ library
                         Cardano.Node.Tracing.NodeInfo
                         Cardano.Node.Tracing.NodeStartupInfo
                         Cardano.Node.Tracing.Render
+                        Cardano.Node.Tracing.TransactionLogging
                         Cardano.Node.Tracing.StateRep
                         Cardano.Node.Tracing.Tracers
                         Cardano.Node.Tracing.Tracers.BlockReplayProgress
@@ -213,6 +214,18 @@ executable cardano-node
                       , cardano-node
                       , optparse-applicative
                       , text
+
+-- Lightweight configuration/encoding tests; no consensus or ledger build needed.
+test-suite transaction-logging-test
+  import:               project-config
+  hs-source-dirs:       test/transaction-logging src
+  main-is:              Main.hs
+  type:                 exitcode-stdio-1.0
+  build-depends:        base
+                      , aeson
+                      , bytestring
+                      , text
+  other-modules:        Cardano.Node.Tracing.TransactionLogging
 
 test-suite cardano-node-test
   import:               project-config
