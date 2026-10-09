@@ -241,10 +241,12 @@ test-suite transaction-logging-integration
                       , bytestring
                       , cardano-node
                       , hedgehog
+                      , ouroboros-consensus:ouroboros-consensus
                       , ouroboros-network:{framework, protocols, ouroboros-network}
                       , text
                       , trace-dispatcher
                       , typed-protocols
+                      , vector
   other-modules:        Test.Cardano.Tracing.NewTracing.TransactionLogging
 
 test-suite cardano-node-test

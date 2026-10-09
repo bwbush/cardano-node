@@ -9,15 +9,17 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Cardano.Node.Tracing.Tracers.NodeToNode
-   (
+   ( formatLeiosFetchWith
    ) where
 
 import           Cardano.Logging
 import           Cardano.Node.Queries (ConvertTxId)
 import           Cardano.Node.Tracing.Render (renderHeaderHash, renderTxIdForDetails)
+import           Cardano.Node.Tracing.TransactionLogging
 import qualified LeiosDemoOnlyTestFetch as LF
 import qualified LeiosDemoOnlyTestNotify as LN
-import           LeiosDemoTypes (LeiosEb, LeiosPoint, LeiosTx, LeiosVote,
+import           LeiosDemoTypes (LeiosEb, LeiosPoint, LeiosTx (..), LeiosVote,
+                   hashLeiosTx, leiosEbBodyItems, prettyTxHash,
                    messageLeiosFetchToObject, messageLeiosNotifyToObject)
 import           Ouroboros.Consensus.Block (ConvertRawHash, GetHeader, Header, StandardHash,
                    getHeader)
@@ -36,6 +38,9 @@ import qualified Ouroboros.Network.Protocol.TxSubmission2.Type as STX
 
 import           Control.Monad.Class.MonadTime.SI (Time (..))
 import           Data.Aeson (ToJSON (..), Value (String), (.=))
+import qualified Data.Aeson as Aeson
+import qualified Data.ByteString as BS
+import           Data.Foldable (toList)
 import           Data.Proxy (Proxy (..))
 import           Data.Text (pack)
 import           Data.Time (DiffTime)
@@ -492,6 +497,39 @@ instance LogFormatting (AnyMessage (LF.LeiosFetch LeiosPoint LeiosEb LeiosTx)) w
 
   forMachine _dtal (AnyMessageAndAgency _stok msg) =
     messageLeiosFetchToObject msg
+
+-- | Add ordered typed references, never CBOR bodies. Positions are zero-based
+-- EB indices, not ledger IDs. Reply order is retained for independent bitmap
+-- checks; consumers must not assume one serialized variant per ledger ID.
+formatLeiosFetchWith
+  :: LeiosReferenceLogOptions
+  -> DetailLevel
+  -> AnyMessage (LF.LeiosFetch LeiosPoint LeiosEb LeiosTx)
+  -> Aeson.Object
+formatLeiosFetchWith opts detail event@(AnyMessageAndAgency _ msg)
+  | not (includeTxReferences opts) = forMachine detail event
+  | otherwise = messageLeiosFetchToObject msg <> case msg of
+      LF.MsgLeiosBlock eb -> metadata <> mconcat
+        [ "txReferences" .=
+            [ Aeson.object ["index" .= ix, "serializedTxHash" .= prettyTxHash h,
+                            "bytes" .= size]
+            | (ix, h, size) <- leiosEbBodyItems eb
+            ]
+        ]
+      LF.MsgLeiosBlockTxs _ _ txs -> metadata <> mconcat
+        [ "txReferences" .=
+            [ Aeson.object ["serializedTxHash" .= prettyTxHash (hashLeiosTx tx),
+                            "bytes" .= BS.length (cbor tx)]
+            | tx <- toList txs
+            ]
+        ]
+      _ -> mempty
+  where
+    metadata :: Aeson.Object
+    metadata = mconcat
+      [ "txReferenceSchema" .= (1 :: Int)
+      , "txReferenceDomain" .= String "blake2b-256-serialized-transaction"
+      ]
 
 instance MetaTrace (AnyMessage (LN.LeiosNotify LeiosPoint (Header blk) LeiosVote)) where
   namespaceFor (AnyMessageAndAgency _stok msg) = case msg of

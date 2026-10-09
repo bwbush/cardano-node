@@ -25,6 +25,16 @@ main = do
         putStrLn $ "PASS: " <> name
 
   check "absent policy preserves defaults" $ parseConfig "{}" == Right legacy
+  let parseLeios bytes = eitherDecode bytes >>= parseEither parseLeiosReferenceLogOptions
+  check "absent Leios policy preserves defaults" $ parseLeios "{}" == Right defaultLeiosReferenceLogOptions
+  check "Leios references opt in independently" $
+    parseLeios "{\"TraceOptionLeios\":{\"includeTxReferences\":true}}" == Right (LeiosReferenceLogOptions True)
+  forM_ [ "{\"TraceOptionLeios\":null}"
+        , "{\"TraceOptionLeios\":{\"includeTxReferences\":null}}"
+        , "{\"TraceOptionLeios\":{\"includeTxReference\":true}}"
+        , "{\"TraceOptionLeios\":{\"includeTxReferences\":\"true\"}}"
+        ] $ \bad -> check ("reject invalid Leios policy " <> BSL.unpack bad) $
+          isLeft (parseLeios bad)
   check "empty policy preserves defaults" $
     parseConfig "{\"TraceOptionTransactions\":{}}" == Right legacy
   check "unrelated node settings are accepted" $

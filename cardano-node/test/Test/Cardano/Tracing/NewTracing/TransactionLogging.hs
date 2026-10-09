@@ -6,12 +6,17 @@ import           Cardano.Logging hiding (detail)
 import           Cardano.Node.Tracing.Configured
 import           Cardano.Node.Tracing.TransactionLogging
 import           Cardano.Node.Tracing.Tracers.TransactionSubmission
+import           Cardano.Node.Tracing.Tracers.NodeToNode (formatLeiosFetchWith)
 import           Control.Monad (forM_)
-import           Data.Aeson (Value (..), encode, toJSON)
+import           Data.Aeson (Value (..), encode, toJSON, object, (.=))
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString.Lazy as BSL
 import           Data.Text (Text)
 import qualified Data.Text as Text
+import qualified Data.Vector.Strict as V
+import qualified LeiosDemoOnlyTestFetch as LF
+import           LeiosDemoTypes (LeiosEb (..), LeiosTx (..), LeiosPoint (..),
+                   hashLeiosTx, hashLeiosEb, prettyTxHash)
 import           Hedgehog
 import           Network.TypedProtocol.Codec (AnyMessage (AnyMessageAndAgency))
 import           Ouroboros.Network.Driver.Simple (TraceSendRecv (..))
@@ -34,7 +39,33 @@ reply = AnyMessageAndAgency STX.SingTxs . STX.MsgReplyTxs
 
 tests :: IO Bool
 tests = checkParallel $ Group "transaction logging integration"
-  [ ("legacy peer output at every detail", withTests 1 $ property $
+  [ ("Leios membership is ordered, complete, typed and opt-in", withTests 1 $ property $ do
+      let a = hashLeiosTx (MkLeiosTx "abc")
+          b = hashLeiosTx (MkLeiosTx "abcd")
+          eb = MkLeiosEb (V.fromList [(b,4),(a,3),(b,4)])
+          event :: AnyMessage (LF.LeiosFetch LeiosPoint LeiosEb LeiosTx)
+          event = AnyMessageAndAgency LF.SingBlock (LF.MsgLeiosBlock eb)
+          fields = ["txReferenceSchema", "txReferenceDomain", "txReferences"]
+      forM_ [DMinimal,DNormal,DDetailed,DMaximum] $ \detail -> do
+        formatLeiosFetchWith defaultLeiosReferenceLogOptions detail event === forMachine detail event
+        let formatted = formatLeiosFetchWith (LeiosReferenceLogOptions True) detail event
+        foldr KeyMap.delete formatted fields === forMachine detail event
+        KeyMap.lookup "txReferences" formatted === Just (toJSON
+          [ object ["index" .= (i :: Int), "serializedTxHash" .= prettyTxHash h, "bytes" .= (n :: Int)]
+          | (i,h,n) <- [(0,b,4),(1,a,3),(2,b,4)] ]))
+  , ("Leios reply hashes actual bytes without logging the body", withTests 1 $ property $ do
+      let tx = MkLeiosTx "abc"
+          eb = MkLeiosEb (V.singleton (hashLeiosTx tx,3))
+          point = MkLeiosPoint 1 (hashLeiosEb eb)
+          event :: AnyMessage (LF.LeiosFetch LeiosPoint LeiosEb LeiosTx)
+          event = AnyMessageAndAgency LF.SingBlockTxs (LF.MsgLeiosBlockTxs point [(0,0x8000000000000000)] (V.singleton tx))
+          formatted = formatLeiosFetchWith (LeiosReferenceLogOptions True) DMaximum event
+      prettyTxHash (hashLeiosTx tx) === "bddd813c634239723171ef3fee98579b94964e3bb1cb3e427262c8c068d52319"
+      KeyMap.lookup "txReferences" formatted === Just (toJSON
+        [object ["serializedTxHash" .= prettyTxHash (hashLeiosTx tx), "bytes" .= (3 :: Int)]])
+      assert $ not ("abc" `Text.isInfixOf` Text.pack (show formatted))
+      KeyMap.lookup "txReferenceDomain" formatted === Just (String "blake2b-256-serialized-transaction"))
+  , ("legacy peer output at every detail", withTests 1 $ property $
       forM_ [DMinimal, DNormal, DDetailed, DMaximum] $ \detail -> do
         let event = reply [FixtureTx hashA "body"]
         formatTxSubmissionWith defaultTransactionLogOptions id fixtureId detail event ===

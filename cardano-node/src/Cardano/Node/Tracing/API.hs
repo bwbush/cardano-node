@@ -29,6 +29,7 @@ import           Cardano.Node.Tracing.Tracers
 import           Cardano.Node.Tracing.Tracers.LedgerMetrics
 import           Cardano.Node.Tracing.Tracers.Resources (startResourceTracer)
 import           Cardano.Node.Tracing.TransactionLogging (TransactionLogOptions,
+                   LeiosReferenceLogOptions, parseLeiosReferenceLogOptions,
                    parseTransactionLogOptions)
 import           Cardano.Node.Types
 import           Ouroboros.Consensus.Ledger.Inspect (LedgerEvent)
@@ -79,11 +80,13 @@ initTraceDispatcher nc p networkMagic nodeKernel noBlockForging = do
   nodeConfig <- Yaml.decodeFileThrow (unConfigPath $ ncConfigFile nc)
   txOptions <- either (ioError . userError) pure $
     parseEither parseTransactionLogOptions nodeConfig
+  leiosOptions <- either (ioError . userError) pure $
+    parseEither parseLeiosReferenceLogOptions nodeConfig
   trConfig <- readConfigurationWithDefault
                 (unConfigPath $ ncConfigFile nc)
                 defaultCardanoConfig
 
-  (kickoffForwarder, kickoffPrometheusSimple, tracers) <- mkTracers txOptions trConfig
+  (kickoffForwarder, kickoffPrometheusSimple, tracers) <- mkTracers leiosOptions txOptions trConfig
 
   -- The NodeInfo DataPoint needs to be fully evaluated and stored
   -- before it is queried for the first time by cardano-tracer.
@@ -112,13 +115,14 @@ initTraceDispatcher nc p networkMagic nodeKernel noBlockForging = do
   ledgerMetricsDefaultFreq = if noBlockForging then 0 else 1
 
   mkTracers
-    :: TransactionLogOptions
+    :: LeiosReferenceLogOptions
+    -> TransactionLogOptions
     -> TraceConfig
     -> IO ( IO ()
           , IO ()
           , Tracers RemoteAddress LocalAddress blk IO
           )
-  mkTracers txOptions trConfig = mdo
+  mkTracers leiosOptions txOptions trConfig = mdo
     ekgStore <- EKG.newStore
     EKG.registerGcMetrics ekgStore
     ekgTrace <- ekgTracer trConfig ekgStore
@@ -155,7 +159,8 @@ initTraceDispatcher nc p networkMagic nodeKernel noBlockForging = do
           -- So we use nullTracers to ignore 'TraceObject's and 'DataPoint's.
           pure (Trace nullTracer, Trace nullTracer, pure ())
 
-    tracers <- mkDispatchTracersWithTransactionLogging
+    tracers <- mkDispatchTracersWithReferenceLogging
+      leiosOptions
       txOptions
       nodeKernel
       stdoutTrace

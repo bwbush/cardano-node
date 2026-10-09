@@ -16,6 +16,7 @@
 module Cardano.Node.Tracing.Tracers
   ( mkDispatchTracers
   , mkDispatchTracersWithTransactionLogging
+  , mkDispatchTracersWithReferenceLogging
   ) where
 
 import           Cardano.Logging
@@ -40,7 +41,7 @@ import           Cardano.Node.Tracing.Tracers.ForgingStats (calcForgeStats)
 import           Cardano.Node.Tracing.Tracers.KESInfo
 import           Cardano.Node.Tracing.Tracers.LedgerMetrics ()
 import           Cardano.Node.Tracing.Tracers.NodeToClient ()
-import           Cardano.Node.Tracing.Tracers.NodeToNode ()
+import           Cardano.Node.Tracing.Tracers.NodeToNode (formatLeiosFetchWith)
 import           Cardano.Node.Tracing.Tracers.NodeVersion (getNodeVersion)
 import           Cardano.Node.Tracing.Tracers.Rpc ()
 import           Cardano.Node.Tracing.Tracers.Shutdown ()
@@ -125,7 +126,33 @@ mkDispatchTracersWithTransactionLogging
   -> TraceConfig
   -> SomeConsensusProtocol
   -> IO (Tracers RemoteAddress LocalAddress blk IO)
-mkDispatchTracersWithTransactionLogging txOptions nodeKernel trBase trForward mbTrEKG trDataPoint trConfig p = do
+mkDispatchTracersWithTransactionLogging =
+  mkDispatchTracersWithReferenceLogging defaultLeiosReferenceLogOptions
+
+-- | Additive entry point, leaving both existing constructors unchanged.
+mkDispatchTracersWithReferenceLogging
+  :: forall blk .
+  ( Consensus.RunNode blk
+  , TraceConstraints blk
+  , LogFormatting (LedgerEvent blk)
+  , LogFormatting
+    (TraceLabelPeer
+      (ConnectionId RemoteAddress) (TraceChainSyncClientEvent blk))
+  , LogFormatting (TraceGsmEvent (Tip blk))
+  , MetaTrace (TraceGsmEvent (Tip blk))
+  , ToJSON (HeaderHash blk)
+  )
+  => LeiosReferenceLogOptions
+  -> TransactionLogOptions
+  -> NodeKernelData blk
+  -> Trace IO FormattedMessage
+  -> Trace IO FormattedMessage
+  -> Maybe (Trace IO FormattedMessage)
+  -> Trace IO DataPoint
+  -> TraceConfig
+  -> SomeConsensusProtocol
+  -> IO (Tracers RemoteAddress LocalAddress blk IO)
+mkDispatchTracersWithReferenceLogging leiosOptions txOptions nodeKernel trBase trForward mbTrEKG trDataPoint trConfig p = do
 
     configReflection <- emptyConfigReflection
 
@@ -185,7 +212,7 @@ mkDispatchTracersWithTransactionLogging txOptions nodeKernel trBase trForward mb
       mkNodeToClientTracers txOptions configReflection trBase trForward mbTrEKG trDataPoint trConfig
 
     !nodeToNodeTr <-
-      mkNodeToNodeTracers txOptions configReflection trBase trForward mbTrEKG trDataPoint trConfig
+      mkNodeToNodeTracers leiosOptions txOptions configReflection trBase trForward mbTrEKG trDataPoint trConfig
 
     !(diffusionTr :: Cardano.Diffusion.CardanoTracers IO) <-
       mkDiffusionTracers configReflection trBase trForward mbTrEKG trDataPoint trConfig
@@ -524,7 +551,8 @@ mkNodeToClientTracers txOptions configReflection trBase trForward mbTrEKG _trDat
 mkNodeToNodeTracers :: forall blk.
   ( Consensus.RunNode blk
   , TraceConstraints blk)
-  => TransactionLogOptions
+  => LeiosReferenceLogOptions
+  -> TransactionLogOptions
   -> ConfigReflection
   -> Trace IO FormattedMessage
   -> Trace IO FormattedMessage
@@ -532,7 +560,7 @@ mkNodeToNodeTracers :: forall blk.
   -> Trace IO DataPoint
   -> TraceConfig
   -> IO (NodeToNode.Tracers IO RemoteAddress blk DeserialiseFailure)
-mkNodeToNodeTracers txOptions configReflection trBase trForward mbTrEKG _trDataPoint trConfig = do
+mkNodeToNodeTracers leiosOptions txOptions configReflection trBase trForward mbTrEKG _trDataPoint trConfig = do
 
     !chainSyncTracer <-  mkCardanoTracer
                 trBase trForward mbTrEKG
@@ -606,7 +634,8 @@ mkNodeToNodeTracers txOptions configReflection trBase trForward mbTrEKG _trDataP
       , NtN.tLeiosNotifyTracer = mkTracer $
           traceWith leiosNotifyTracer
       , NtN.tLeiosFetchTracer = mkTracer $
-          traceWith leiosFetchTracer
+          traceWith leiosFetchTracer . ConfiguredTrace (includeTxReferences leiosOptions)
+            (formatPeerWith $ formatSendRecvWith $ formatLeiosFetchWith leiosOptions)
       }
 
 mkDiffusionTracers ::

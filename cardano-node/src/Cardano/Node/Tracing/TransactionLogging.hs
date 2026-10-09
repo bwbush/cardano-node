@@ -10,6 +10,9 @@ module Cardano.Node.Tracing.TransactionLogging
   , transactionObject
   , fullTxIdsField
   , transactionPayloadField
+  , LeiosReferenceLogOptions (..)
+  , defaultLeiosReferenceLogOptions
+  , parseLeiosReferenceLogOptions
   ) where
 
 import           Control.Monad (unless)
@@ -53,6 +56,31 @@ parseTransactionLogOptions :: Value -> Parser TransactionLogOptions
 parseTransactionLogOptions = withObject "node configuration" $ \o ->
   maybe (pure defaultTransactionLogOptions) parseJSON
     (KeyMap.lookup "TraceOptionTransactions" o)
+
+-- | Separate policy preserves the existing two-field transaction API. Hashing
+-- serialized replies has a cost, so references are explicitly opt-in.
+newtype LeiosReferenceLogOptions = LeiosReferenceLogOptions
+  { includeTxReferences :: Bool
+  } deriving (Eq, Show)
+
+defaultLeiosReferenceLogOptions :: LeiosReferenceLogOptions
+defaultLeiosReferenceLogOptions = LeiosReferenceLogOptions False
+
+instance FromJSON LeiosReferenceLogOptions where
+  parseJSON = withObject "TraceOptionLeios" $ \o -> do
+    let unknown = KeyMap.keys o \\ ["includeTxReferences"]
+    unless (null unknown) $
+      fail $ "Unknown TraceOptionLeios fields: " <> show unknown
+    LeiosReferenceLogOptions <$> maybe (pure False) parseJSON
+      (KeyMap.lookup "includeTxReferences" o)
+
+instance ToJSON LeiosReferenceLogOptions where
+  toJSON opts = object ["includeTxReferences" .= includeTxReferences opts]
+
+parseLeiosReferenceLogOptions :: Value -> Parser LeiosReferenceLogOptions
+parseLeiosReferenceLogOptions = withObject "node configuration" $ \o ->
+  maybe (pure defaultLeiosReferenceLogOptions) parseJSON
+    (KeyMap.lookup "TraceOptionLeios" o)
 
 -- | Keep legacy output untouched unless explicitly configured. In suppressed
 -- mode the legacy object is not evaluated: no transaction dump is constructed
