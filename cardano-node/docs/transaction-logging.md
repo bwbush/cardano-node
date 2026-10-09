@@ -34,7 +34,23 @@ Do not assume an older node recognizes this configuration. Archive the node revi
 
 Full identifiers are lowercase hexadecimal representations of the ledger transaction ID, not a search through rendered transaction text. Batch order and repeated identifiers are preserved. A transaction ID identifies a body, not a submission occurrence; retries, re-admissions, and rollbacks still require occurrence-aware analysis.
 
-The Leios transaction-reference hash identifies serialized transaction bytes, including witnesses, and is a different identifier domain. This change does not compute or log that mapping. Do not join these hashes to ledger IDs simply because both are full-length hexadecimal strings.
+The Leios transaction-reference hash identifies serialized transaction bytes, including witnesses, and is a different identifier domain. The transaction options do not compute that mapping. The separate Leios option below exposes serialized hashes but does not equate them to ledger IDs. Do not join these hashes to ledger IDs simply because both are full-length hexadecimal strings.
+
+## Opt-in Leios fetch references
+
+```json
+{"TraceOptionLeios": {"includeTxReferences": true}}
+```
+
+The default is false. Unknown fields, explicit nulls, and non-boolean values fail startup. This setting is independent of `TraceOptionTransactions` and detail level, and leaves both existing tracer-construction APIs intact. No collector change is required.
+
+For `LeiosFetch.Remote.Send/Receive.Block`, the nested message gains `txReferenceSchema: 1`, `txReferenceDomain: "blake2b-256-serialized-transaction"`, and `txReferences`: an ordered array of objects with zero-based `index`, full `serializedTxHash`, and `bytes` (serialized transaction length). Existing `ebHash` identifies the body. Order and multiplicity are preserved; consumers must validate them, not sort or deduplicate them.
+
+For `LeiosFetch.Remote.Send/Receive.BlockTxs`, the same metadata accompanies `txReferences` containing full `serializedTxHash` and `bytes` for each actual transaction, in reply order. No transaction body is emitted. Existing request/reply bitmaps and summary fields remain unchanged. Hashing replies adds CPU/allocation work, including for repeated replies: this is an instrumentation cost, not a free cache lookup. Membership hashes are already present in the EB. Measure overhead under the intended workload before using this configuration for performance conclusions.
+
+In the pinned consensus implementation, bitmap `(chunk, word)` addresses EB positions `64*chunk + i`, where bit `63-i` selects position `i`. Chunks and selected positions are ascending. Validate the bitmap population, vector bounds, ordered reply hashes and byte sizes before expanding references. Retain the original message identity so expanding one batch into many transaction rows does not multiply message byte totals.
+
+These fields describe observed messages, not cache admission, validation success, mempool removal, or chain adoption. An EB member reference is not a received transaction body. A send is not evidence of delivery at another node. Preserve unresolved mappings and missing prerequisites; a missing ledger-ID match is not evidence that the node never received the transaction. A ledger-ID bridge requires independently identified signed transaction bytes and must allow multiple serialized variants per ledger body. This formatter does not decode arbitrary Leios transaction bytes to obtain ledger IDs, and does not add producer-only or per-transaction cache-transition instrumentation.
 
 ## Compatibility and suppression boundaries
 
@@ -44,7 +60,7 @@ New fields are additive and opt-in. Consumers with strict schemas may still need
 
 Suppression prevents construction of the supported transaction dumps, including their witnesses and script data. Human output for adapted events falls back to the configured machine object, avoiding a second legacy renderer that might expose the dump. Rejection diagnostics retain their existing detail-level behavior. **This is not a privacy-redaction guarantee:** errors and other diagnostics can contain transaction-related values.
 
-This initial implementation does not transform every diagnostic that could mention a transaction. Shared transaction-state snapshots, transaction-logic debugging, arbitrary error text, block-fetch formatting, local transaction-monitor traces, and Leios-specific traces are not changed. Operators requiring a broader suppression guarantee must review those paths and their namespace configuration separately. The policy does not remove data from already archived logs.
+This implementation does not transform every diagnostic that could mention a transaction. Shared transaction-state snapshots, transaction-logic debugging, arbitrary error text, block-fetch formatting, local transaction-monitor traces, and Leios traces other than the opt-in fetch references are not changed. Operators requiring a broader suppression guarantee must review those paths and their namespace configuration separately. The policy does not remove data from already archived logs.
 
 ## Tests and remaining validation
 
