@@ -2,6 +2,8 @@
 
 ## Next version
 
+* Added opt-in `TraceOptionLeios.includeTxReferences` for ordered endorser-block membership and actual fetch-reply serialized-transaction hashes and byte sizes. Schema 1 preserves order and multiplicity without logging transaction bodies; its hashes are not ledger transaction IDs. The default remains false. See [the schema and compatibility guide](docs/transaction-logging.md#opt-in-leios-fetch-references) for instrumentation cost and interpretation limits.
+
 * Added opt-in `TraceOptionTransactions` settings for full ledger transaction IDs and suppression of verbose transaction dumps in dispatcher mempool and submission traces. Both settings default to false, preserving existing output. See [configuration, coverage, and compatibility](docs/transaction-logging.md); suppression is not a global redaction guarantee.
 
 * Added a `--shelley-bls-key FILEPATH` option to `cardano-node run` for supplying a block producer's BLS (Leios) signing key alongside the existing VRF/KES/operational-certificate keys. The key is threaded into the consensus block-producer credentials and used as the Leios voting key. It is optional: producers that do not supply it no longer vote (previously a placeholder key was derived from cold-key material). Generate one with `cardano-cli dijkstra node key-gen-BLS`.
