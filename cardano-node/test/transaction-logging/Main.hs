@@ -29,6 +29,15 @@ main = do
   check "absent Leios policy preserves defaults" $ parseLeios "{}" == Right defaultLeiosReferenceLogOptions
   check "Leios references opt in independently" $
     parseLeios "{\"TraceOptionLeios\":{\"includeTxReferences\":true}}" == Right (LeiosReferenceLogOptions True)
+  check "empty Leios policy preserves defaults" $
+    parseLeios "{\"TraceOptionLeios\":{}}" == Right defaultLeiosReferenceLogOptions
+  forM_ [False, True] $ \refs -> forM_ [False, True] $ \ids -> forM_ [False, True] $ \bodies -> do
+    let config = encode $ object ["TraceOptionTransactions" .= TransactionLogOptions ids bodies,
+                                  "TraceOptionLeios" .= LeiosReferenceLogOptions refs,
+                                  "NetworkMagic" .= (164 :: Int)]
+    check ("independent startup policies " <> show (refs, ids, bodies)) $
+      parseLeios config == Right (LeiosReferenceLogOptions refs) &&
+      parseConfig config == Right (TransactionLogOptions ids bodies)
   forM_ [ "{\"TraceOptionLeios\":null}"
         , "{\"TraceOptionLeios\":{\"includeTxReferences\":null}}"
         , "{\"TraceOptionLeios\":{\"includeTxReference\":true}}"
