@@ -3,6 +3,7 @@
 module Test.Cardano.Tracing.NewTracing.TransactionLogging (tests) where
 
 import           Cardano.Logging hiding (detail)
+import           Cardano.Protocol.Crypto (StandardCrypto)
 import           Cardano.Node.Tracing.Configured
 import           Cardano.Node.Tracing.TransactionLogging
 import           Cardano.Node.Tracing.Tracers.TransactionSubmission
@@ -11,15 +12,20 @@ import           Control.Monad (forM_)
 import           Data.Aeson (Value (..), encode, toJSON, object, (.=))
 import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString.Lazy as BSL
+import qualified Data.IntSet as IntSet
 import           Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Vector.Strict as V
 import qualified LeiosDemoOnlyTestFetch as LF
+import           LeiosDemoLogic (bitmapOffsets, offsetsToBitmap)
 import           LeiosDemoTypes (LeiosEb (..), LeiosTx (..), LeiosPoint (..),
                    hashLeiosTx, hashLeiosEb, prettyTxHash)
 import           Hedgehog
 import           Network.TypedProtocol.Codec (AnyMessage (AnyMessageAndAgency))
 import           Ouroboros.Network.Driver.Simple (TraceSendRecv (..))
+import           Ouroboros.Consensus.Cardano.Block (CardanoBlock)
+import           Ouroboros.Network.Block (Point)
+import qualified Ouroboros.Network.Protocol.BlockFetch.Type as BF
 import qualified Ouroboros.Network.Protocol.TxSubmission2.Type as STX
 import           Ouroboros.Network.TxSubmission.Inbound.V2 (TraceTxSubmissionInbound (..))
 import           Ouroboros.Network.TxSubmission.Outbound (TraceTxSubmissionOutbound (..))
@@ -70,6 +76,49 @@ tests = checkParallel $ Group "transaction logging integration"
         let event = reply [FixtureTx hashA "body"]
         formatTxSubmissionWith defaultTransactionLogOptions id fixtureId detail event ===
           forMachine detail event)
+  , ("Leios bitmap literals agree with consensus across chunk boundaries", withTests 1 $ property $ do
+      let offsets = [0,63,64,65,127,128]
+          bitmaps = [(0,0x8000000000000001),(1,0xc000000000000001),(2,0x8000000000000000)]
+      offsetsToBitmap (IntSet.fromList offsets) === bitmaps
+      bitmapOffsets bitmaps === offsets)
+  , ("Leios reply order and duplicates survive without derived indices", withTests 1 $ property $ do
+      let a = MkLeiosTx "abc"
+          b = MkLeiosTx "abcd"
+          eb = MkLeiosEb (V.fromList [(hashLeiosTx b,4),(hashLeiosTx a,3),(hashLeiosTx b,4)])
+          point = MkLeiosPoint 1 (hashLeiosEb eb)
+          event :: AnyMessage (LF.LeiosFetch LeiosPoint LeiosEb LeiosTx)
+          event = AnyMessageAndAgency LF.SingBlockTxs
+            (LF.MsgLeiosBlockTxs point [(0,0xe000000000000000)] (V.fromList [b,a,b]))
+          expected = toJSON [object ["serializedTxHash" .= prettyTxHash (hashLeiosTx t),
+                                      "bytes" .= (n :: Int)] | (t,n) <- [(b,4),(a,3),(b,4)]]
+      forM_ [DMinimal,DNormal,DDetailed,DMaximum] $ \detail -> do
+        let formatted = formatLeiosFetchWith (LeiosReferenceLogOptions True) detail event
+        KeyMap.lookup "txReferences" formatted === Just expected
+        encode (formatLeiosFetchWith defaultLeiosReferenceLogOptions detail event) ===
+          encode (forMachine detail event)
+        encode (foldr KeyMap.delete formatted ["txReferences","txReferenceSchema","txReferenceDomain"]) ===
+          encode (forMachine detail event))
+  , ("Leios send and receive adapters wire the option without changing legacy bytes", withTests 1 $ property $ do
+      let tx = MkLeiosTx "abc"
+          eb = MkLeiosEb (V.singleton (hashLeiosTx tx,3))
+          event :: AnyMessage (LF.LeiosFetch LeiosPoint LeiosEb LeiosTx)
+          event = AnyMessageAndAgency LF.SingBlock (LF.MsgLeiosBlock eb)
+      forM_ [False,True] $ \enabled ->
+        forM_ [TraceSendMsg event,TraceRecvMsg event] $ \wire ->
+          forM_ [DMinimal,DNormal,DDetailed,DMaximum] $ \detail -> do
+            let opts = LeiosReferenceLogOptions enabled
+                wrapped = ConfiguredTrace enabled (formatSendRecvWith $ formatLeiosFetchWith opts) wire
+            encode (forMachine detail wrapped) ===
+              encode (formatSendRecvWith (formatLeiosFetchWith opts) detail wire)
+            nsGetTuple (namespaceFor wrapped) === nsGetTuple (namespaceFor wire)
+            if enabled then forHuman wrapped === "" else do
+              encode (forMachine detail wrapped) === encode (forMachine detail wire)
+              forHuman wrapped === forHuman wire)
+  , ("decoded block human rendering does not force the block body", withTests 1 $ property $ do
+      let event :: AnyMessage (BF.BlockFetch (CardanoBlock StandardCrypto) (Point (CardanoBlock StandardCrypto)))
+          event = AnyMessageAndAgency BF.SingBFStreaming (BF.MsgBlock (error "decoded block body forced"))
+      forHuman event === ""
+      forHuman (TraceRecvMsg event) === "Receive: ")
   , ("peer reply does not evaluate omitted bodies", withTests 1 $ property $ do
       let event = reply [FixtureTx hashA (error "body evaluated"), FixtureTx hashB "body"]
           formatted = formatTxSubmissionWith compact id fixtureId DDetailed event
