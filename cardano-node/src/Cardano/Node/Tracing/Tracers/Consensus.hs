@@ -28,6 +28,7 @@ module Cardano.Node.Tracing.Tracers.Consensus
   , txsSyncDurationTotalCounterName
   , impliesMempoolTimeoutSoft
   , formatMempoolWith
+  , formatMempoolWithIdentities
   , formatLocalTxSubmissionWith
   ) where
 
@@ -95,6 +96,8 @@ import           LeiosDemoTypes (AnnouncementFields (..), FetchArrivalBytes (..)
                    TraceLeiosKernel (..), TraceLeiosPeer (..), traceLeiosKernelToObject,
                    traceLeiosPeerToObject)
 import qualified LeiosDemoTypes as Leios
+import qualified Data.ByteString as BS
+import           Ouroboros.Consensus.Storage.LedgerDB.Forker (ResolveLeiosBlock (leiosTxBytesOfGenTx))
 import           LeiosDemoDb.Trace (TraceLeiosDb (..), LeiosDbStats (..))
 import           LeiosUtils.CallTrace (SomeJsonCallTrace (..), callTraceToObject)
 
@@ -1091,6 +1094,23 @@ formatMempoolWith
   ) => TransactionLogOptions -> DetailLevel -> TraceEventMempool blk -> Aeson.Object
 formatMempoolWith opts = formatMempoolUsing
   (\dtal tx -> transactionObject opts (renderTxId $ txId tx) (forMachine dtal tx))
+  (fullTxIdsField opts "txsRemovedFull" . map renderTxId)
+
+-- | Pair the ledger ID with exactly the encoding used by the node's Leios
+-- serializer. This adds no decoding, signature checking, or script execution.
+-- A wire encoding with different witnesses is a separate serialized variant.
+formatMempoolWithIdentities
+  :: ( LogFormatting (ApplyTxErr blk), LogFormatting (GenTx blk)
+     , HasTxId (GenTx blk), Show (GenTxId blk), ConvertTxId blk
+     , LedgerSupportsMempool blk, ConvertRawHash blk, ResolveLeiosBlock blk
+     )
+  => TransactionIdentityLogOptions -> TransactionLogOptions
+  -> DetailLevel -> TraceEventMempool blk -> Aeson.Object
+formatMempoolWithIdentities identityOpts opts = formatMempoolUsing
+  (\dtal tx -> transactionObject opts (renderTxId $ txId tx) (forMachine dtal tx) <>
+    transactionIdentityField identityOpts (renderTxId $ txId tx)
+      (fmap (\bs -> (Text.pack $ Leios.prettyTxHash $ Leios.hashLeiosTx $ Leios.MkLeiosTx bs, BS.length bs))
+        (leiosTxBytesOfGenTx tx)))
   (fullTxIdsField opts "txsRemovedFull" . map renderTxId)
 
 -- Keep the legacy instance's constraints unchanged: only the configured path

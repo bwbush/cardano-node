@@ -13,6 +13,10 @@ module Cardano.Node.Tracing.TransactionLogging
   , LeiosReferenceLogOptions (..)
   , defaultLeiosReferenceLogOptions
   , parseLeiosReferenceLogOptions
+  , TransactionIdentityLogOptions (..)
+  , defaultTransactionIdentityLogOptions
+  , parseTransactionIdentityLogOptions
+  , transactionIdentityField
   ) where
 
 import           Control.Monad (unless)
@@ -81,6 +85,47 @@ parseLeiosReferenceLogOptions :: Value -> Parser LeiosReferenceLogOptions
 parseLeiosReferenceLogOptions = withObject "node configuration" $ \o ->
   maybe (pure defaultLeiosReferenceLogOptions) parseJSON
     (KeyMap.lookup "TraceOptionLeios" o)
+
+-- | Independent policy: existing constructors and their defaults stay intact.
+-- Initially applies only to decoded transactions in mempool traces.
+newtype TransactionIdentityLogOptions = TransactionIdentityLogOptions
+  { includeMempoolIdentityPairs :: Bool
+  } deriving (Eq, Show)
+
+defaultTransactionIdentityLogOptions :: TransactionIdentityLogOptions
+defaultTransactionIdentityLogOptions = TransactionIdentityLogOptions False
+
+instance FromJSON TransactionIdentityLogOptions where
+  parseJSON = withObject "TraceOptionTransactionIdentity" $ \o -> do
+    let unknown = KeyMap.keys o \\ ["includeMempoolIdentityPairs"]
+    unless (null unknown) $
+      fail $ "Unknown TraceOptionTransactionIdentity fields: " <> show unknown
+    TransactionIdentityLogOptions <$> maybe (pure False) parseJSON
+      (KeyMap.lookup "includeMempoolIdentityPairs" o)
+
+instance ToJSON TransactionIdentityLogOptions where
+  toJSON opts = object ["includeMempoolIdentityPairs" .= includeMempoolIdentityPairs opts]
+
+parseTransactionIdentityLogOptions :: Value -> Parser TransactionIdentityLogOptions
+parseTransactionIdentityLogOptions = withObject "node configuration" $ \o ->
+  maybe (pure defaultTransactionIdentityLogOptions) parseJSON
+    (KeyMap.lookup "TraceOptionTransactionIdentity" o)
+
+-- | Disabled output must not evaluate the ledger ID, serializer or hash. An
+-- unsupported era is explicit, not an invented hash or an empty transaction.
+transactionIdentityField
+  :: TransactionIdentityLogOptions -> Text -> Maybe (Text, Int) -> Object
+transactionIdentityField opts ledgerId serialized
+  | not (includeMempoolIdentityPairs opts) = mempty
+  | otherwise = KeyMap.singleton "txIdentity" $ object $
+      [ "schema" .= (1 :: Int)
+      , "ledgerTxId" .= ledgerId
+      , "serializedDomain" .= ("blake2b-256-serialized-transaction" :: Text)
+      , "derivation" .= ("node-leios-serialization" :: Text)
+      ] <> case serialized of
+        Nothing -> ["status" .= ("unsupported_era" :: Text)]
+        Just (hash, size) -> [ "status" .= ("mapped" :: Text)
+                             , "serializedTxHash" .= hash, "bytes" .= size ]
 
 -- | Keep legacy output untouched unless explicitly configured. In suppressed
 -- mode the legacy object is not evaluated: no transaction dump is constructed

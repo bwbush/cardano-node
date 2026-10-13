@@ -23,6 +23,42 @@ Do not assume an older node recognizes this configuration. Archive the node revi
 
 ## Fields and coverage
 
+### Opt-in mempool identity pairs
+
+The additional, independent top-level policy below links ledger IDs to the hash of the node's Leios serialization, without logging transaction bodies:
+
+```json
+{
+  "TraceOptionTransactionIdentity": {
+    "includeMempoolIdentityPairs": true
+  }
+}
+```
+
+The default is false. Omitted/empty policies preserve existing output and do not force extra serialization or hashing. Explicit nulls, unknown fields, and non-boolean values within this object are startup errors. Existing constructors and the older transaction/reference option types are unchanged. Install a supporting binary before enabling this option: older binaries do not provide the new field, and successful startup alone is not evidence that an unfamiliar top-level policy was read. Namespace selection still controls which events are emitted. Restart to change the setting; it is not a hot-reload policy.
+
+This increment applies only to decoded transaction objects in `Mempool.AttemptAdd`, `AddedTx`, `RejectedTx`, `RemoveTxs`, and the invalidated transactions in `ManuallyRemovedTxs`. ID-only manual-removal requests cannot provide pairs. Other submission, block-fetch, and Leios-only paths are unchanged. The nested transaction gains:
+
+```json
+{
+  "txIdentity": {
+    "schema": 1,
+    "status": "mapped",
+    "ledgerTxId": "<64 lowercase hexadecimal characters>",
+    "serializedTxHash": "<64 lowercase hexadecimal characters>",
+    "bytes": 202,
+    "serializedDomain": "blake2b-256-serialized-transaction",
+    "derivation": "node-leios-serialization"
+  }
+}
+```
+
+The byte count above is illustrative. The implementation uses consensus `leiosTxBytesOfGenTx`, hashes exactly its returned bytes, and retains the ledger ID separately. At this baseline the serializer is supported for Dijkstra; unsupported eras emit `status: "unsupported_era"` with the schema, ledger ID, domain, and derivation, but no serialized hash or byte count. This avoids pretending an unavailable pair was established.
+
+This performs serialization and hashing, but no additional transaction decoding, signature validation, or script execution. Each logged occurrence incurs that cost; there is no node-side identity cache or deduplication. No bodies are added by the identity field; the independent body-suppression policy still governs older fields. One ledger ID can have multiple witnessed serialized variants. The emitted hash describes the node's serialization, not an assertion that every wire representation has identical bytes. Join only matching serialized hashes and sizes, retain the mapping's provenance, and reject conflicts. A later or other-observer mapping can resolve earlier references without establishing that the earlier observer decoded, admitted, validated, or retained the transaction.
+
+### Transaction payload fields
+
 | Event path | Opt-in representation |
 |---|---|
 | `Mempool.AttemptAdd`, `AddedTx`, `RejectedTx`, `RemoveTxs` | Transaction objects gain `txIdFull`. With suppression, retain the legacy eight-character `txid`, add `txBodyOmitted: true`, and omit the textual `tx` dump. |

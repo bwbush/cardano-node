@@ -25,6 +25,36 @@ main = do
         putStrLn $ "PASS: " <> name
 
   check "absent policy preserves defaults" $ parseConfig "{}" == Right legacy
+  let parseIdentity bytes = eitherDecode bytes >>= parseEither parseTransactionIdentityLogOptions
+      identities = TransactionIdentityLogOptions True
+  check "absent identity policy preserves defaults" $
+    parseIdentity "{}" == Right defaultTransactionIdentityLogOptions
+  check "empty identity policy preserves defaults" $
+    parseIdentity "{\"TraceOptionTransactionIdentity\":{}}" == Right defaultTransactionIdentityLogOptions
+  forM_ [False, True] $ \enabled -> check ("identity policy roundtrip " <> show enabled) $
+    parseIdentity (encode $ object ["TraceOptionTransactionIdentity" .= TransactionIdentityLogOptions enabled]) ==
+      Right (TransactionIdentityLogOptions enabled)
+  forM_ [ "{\"TraceOptionTransactionIdentity\":null}"
+        , "{\"TraceOptionTransactionIdentity\":{\"includeMempoolIdentityPairs\":null}}"
+        , "{\"TraceOptionTransactionIdentity\":{\"includeMempoolIdentityPairs\":\"true\"}}"
+        , "{\"TraceOptionTransactionIdentity\":{\"includeIdentityPairs\":true}}"
+        ] $ \bad -> check ("reject invalid identity policy " <> BSL.unpack bad) $
+          isLeft (parseIdentity bad)
+  check "disabled identities do not evaluate ID, serialization or hash" $
+    transactionIdentityField defaultTransactionIdentityLogOptions
+      (error "ID forced") (error "serialization forced") == mempty
+  check "enabled identities preserve both hash domains and size" $
+    KeyMap.lookup "txIdentity" (transactionIdentityField identities hashA (Just (hashB,202))) ==
+      Just (object ["schema" .= (1 :: Int), "ledgerTxId" .= hashA,
+        "serializedDomain" .= ("blake2b-256-serialized-transaction" :: Text.Text),
+        "derivation" .= ("node-leios-serialization" :: Text.Text),
+        "status" .= ("mapped" :: Text.Text), "serializedTxHash" .= hashB, "bytes" .= (202 :: Int)])
+  check "unsupported era is explicit" $
+    KeyMap.lookup "txIdentity" (transactionIdentityField identities hashA Nothing) ==
+      Just (object ["schema" .= (1 :: Int), "ledgerTxId" .= hashA,
+        "serializedDomain" .= ("blake2b-256-serialized-transaction" :: Text.Text),
+        "derivation" .= ("node-leios-serialization" :: Text.Text),
+        "status" .= ("unsupported_era" :: Text.Text)])
   let parseLeios bytes = eitherDecode bytes >>= parseEither parseLeiosReferenceLogOptions
   check "absent Leios policy preserves defaults" $ parseLeios "{}" == Right defaultLeiosReferenceLogOptions
   check "Leios references opt in independently" $

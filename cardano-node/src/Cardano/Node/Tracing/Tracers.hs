@@ -17,6 +17,7 @@ module Cardano.Node.Tracing.Tracers
   ( mkDispatchTracers
   , mkDispatchTracersWithTransactionLogging
   , mkDispatchTracersWithReferenceLogging
+  , mkDispatchTracersWithIdentityLogging
   ) where
 
 import           Cardano.Logging
@@ -152,7 +153,32 @@ mkDispatchTracersWithReferenceLogging
   -> TraceConfig
   -> SomeConsensusProtocol
   -> IO (Tracers RemoteAddress LocalAddress blk IO)
-mkDispatchTracersWithReferenceLogging leiosOptions txOptions nodeKernel trBase trForward mbTrEKG trDataPoint trConfig p = do
+mkDispatchTracersWithReferenceLogging =
+  mkDispatchTracersWithIdentityLogging defaultTransactionIdentityLogOptions
+
+-- | Opt-in identity instrumentation, preserving all older constructors.
+mkDispatchTracersWithIdentityLogging
+  :: forall blk .
+  ( Consensus.RunNode blk
+  , TraceConstraints blk
+  , LogFormatting (LedgerEvent blk)
+  , LogFormatting (TraceLabelPeer (ConnectionId RemoteAddress) (TraceChainSyncClientEvent blk))
+  , LogFormatting (TraceGsmEvent (Tip blk))
+  , MetaTrace (TraceGsmEvent (Tip blk))
+  , ToJSON (HeaderHash blk)
+  )
+  => TransactionIdentityLogOptions
+  -> LeiosReferenceLogOptions
+  -> TransactionLogOptions
+  -> NodeKernelData blk
+  -> Trace IO FormattedMessage
+  -> Trace IO FormattedMessage
+  -> Maybe (Trace IO FormattedMessage)
+  -> Trace IO DataPoint
+  -> TraceConfig
+  -> SomeConsensusProtocol
+  -> IO (Tracers RemoteAddress LocalAddress blk IO)
+mkDispatchTracersWithIdentityLogging identityOptions leiosOptions txOptions nodeKernel trBase trForward mbTrEKG trDataPoint trConfig p = do
 
     configReflection <- emptyConfigReflection
 
@@ -206,7 +232,7 @@ mkDispatchTracersWithReferenceLogging leiosOptions txOptions nodeKernel trBase t
 
 
     !consensusTr <-
-      mkConsensusTracers txOptions configReflection trBase trForward mbTrEKG trDataPoint trConfig nodeKernel
+      mkConsensusTracers identityOptions txOptions configReflection trBase trForward mbTrEKG trDataPoint trConfig nodeKernel
 
     !nodeToClientTr <-
       mkNodeToClientTracers txOptions configReflection trBase trForward mbTrEKG trDataPoint trConfig
@@ -266,7 +292,8 @@ mkConsensusTracers :: forall blk.
   , MetaTrace (TraceGsmEvent (Tip blk))
   , ToJSON (HeaderHash blk)
   )
-  => TransactionLogOptions
+  => TransactionIdentityLogOptions
+  -> TransactionLogOptions
   -> ConfigReflection
   -> Trace IO FormattedMessage
   -> Trace IO FormattedMessage
@@ -275,7 +302,7 @@ mkConsensusTracers :: forall blk.
   -> TraceConfig
   -> NodeKernelData blk
   -> IO (Consensus.Tracers IO (ConnectionId RemoteAddress) (ConnectionId LocalAddress) blk)
-mkConsensusTracers txOptions configReflection trBase trForward mbTrEKG _trDataPoint trConfig _nodeKernel = do
+mkConsensusTracers identityOptions txOptions configReflection trBase trForward mbTrEKG _trDataPoint trConfig _nodeKernel = do
     !chainSyncClientTr  <- mkCardanoTracer
                 trBase trForward mbTrEKG
                  ["ChainSync", "Client"]
@@ -470,7 +497,7 @@ mkConsensusTracers txOptions configReflection trBase trForward mbTrEKG _trDataPo
             (formatLocalTxSubmissionWith txOptions)
       , Consensus.mempoolTracer = mkTracer $
           traceWith mempoolTr . ConfiguredTrace (suppressTxBodies txOptions)
-            (formatMempoolWith txOptions)
+            (formatMempoolWithIdentities identityOptions txOptions)
       , Consensus.forgeTracer =
            mkTracer (\(Consensus.TraceLabelCreds _ x) -> traceWith forgeTr x)
            <>

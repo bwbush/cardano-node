@@ -2,6 +2,8 @@
 
 ## Next version
 
+* Added default-off `TraceOptionTransactionIdentity.includeMempoolIdentityPairs` for source-visible ledger/Leios serialized identity pairs on decoded mempool traces. Unsupported eras are explicit; existing options, constructors, event fields and disabled output remain unchanged. This adds serialization/hashing, not decoding or validation. See [coverage and schema](docs/transaction-logging.md#opt-in-mempool-identity-pairs).
+
 * Added opt-in `TraceOptionLeios.includeTxReferences` for ordered endorser-block membership and actual fetch-reply serialized-transaction hashes and byte sizes. Schema 1 preserves order and multiplicity without logging transaction bodies; its hashes are not ledger transaction IDs. The default remains false. See [the schema and compatibility guide](docs/transaction-logging.md#opt-in-leios-fetch-references) for instrumentation cost and interpretation limits.
 
 * Added opt-in `TraceOptionTransactions` settings for full ledger transaction IDs and suppression of verbose transaction dumps in dispatcher mempool and submission traces. Both settings default to false, preserving existing output. See [configuration, coverage, and compatibility](docs/transaction-logging.md); suppression is not a global redaction guarantee.

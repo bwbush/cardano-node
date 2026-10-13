@@ -30,6 +30,7 @@ import           Cardano.Node.Tracing.Tracers.LedgerMetrics
 import           Cardano.Node.Tracing.Tracers.Resources (startResourceTracer)
 import           Cardano.Node.Tracing.TransactionLogging (TransactionLogOptions,
                    LeiosReferenceLogOptions, parseLeiosReferenceLogOptions,
+                   TransactionIdentityLogOptions, parseTransactionIdentityLogOptions,
                    parseTransactionLogOptions)
 import           Cardano.Node.Types
 import           Ouroboros.Consensus.Ledger.Inspect (LedgerEvent)
@@ -82,11 +83,13 @@ initTraceDispatcher nc p networkMagic nodeKernel noBlockForging = do
     parseEither parseTransactionLogOptions nodeConfig
   leiosOptions <- either (ioError . userError) pure $
     parseEither parseLeiosReferenceLogOptions nodeConfig
+  identityOptions <- either (ioError . userError) pure $
+    parseEither parseTransactionIdentityLogOptions nodeConfig
   trConfig <- readConfigurationWithDefault
                 (unConfigPath $ ncConfigFile nc)
                 defaultCardanoConfig
 
-  (kickoffForwarder, kickoffPrometheusSimple, tracers) <- mkTracers leiosOptions txOptions trConfig
+  (kickoffForwarder, kickoffPrometheusSimple, tracers) <- mkTracers identityOptions leiosOptions txOptions trConfig
 
   -- The NodeInfo DataPoint needs to be fully evaluated and stored
   -- before it is queried for the first time by cardano-tracer.
@@ -115,14 +118,15 @@ initTraceDispatcher nc p networkMagic nodeKernel noBlockForging = do
   ledgerMetricsDefaultFreq = if noBlockForging then 0 else 1
 
   mkTracers
-    :: LeiosReferenceLogOptions
+    :: TransactionIdentityLogOptions
+    -> LeiosReferenceLogOptions
     -> TransactionLogOptions
     -> TraceConfig
     -> IO ( IO ()
           , IO ()
           , Tracers RemoteAddress LocalAddress blk IO
           )
-  mkTracers leiosOptions txOptions trConfig = mdo
+  mkTracers identityOptions leiosOptions txOptions trConfig = mdo
     ekgStore <- EKG.newStore
     EKG.registerGcMetrics ekgStore
     ekgTrace <- ekgTracer trConfig ekgStore
@@ -159,7 +163,8 @@ initTraceDispatcher nc p networkMagic nodeKernel noBlockForging = do
           -- So we use nullTracers to ignore 'TraceObject's and 'DataPoint's.
           pure (Trace nullTracer, Trace nullTracer, pure ())
 
-    tracers <- mkDispatchTracersWithReferenceLogging
+    tracers <- mkDispatchTracersWithIdentityLogging
+      identityOptions
       leiosOptions
       txOptions
       nodeKernel
