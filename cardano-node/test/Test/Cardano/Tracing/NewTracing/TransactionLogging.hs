@@ -19,11 +19,13 @@ import qualified Data.Vector.Strict as V
 import qualified LeiosDemoOnlyTestFetch as LF
 import           LeiosDemoLogic (bitmapOffsets, offsetsToBitmap)
 import           LeiosDemoTypes (LeiosEb (..), LeiosTx (..), LeiosPoint (..),
-                   hashLeiosTx, hashLeiosEb, prettyTxHash)
+                   hashLeiosTx, prettyTxHash)
 import           Hedgehog
 import           Network.TypedProtocol.Codec (AnyMessage (AnyMessageAndAgency))
 import           Ouroboros.Network.Driver.Simple (TraceSendRecv (..))
 import           Ouroboros.Consensus.Cardano.Block (CardanoBlock)
+import           Ouroboros.Consensus.Cardano.Node ()
+import           Ouroboros.Consensus.Shelley.Ledger.SupportsProtocol ()
 import           Ouroboros.Network.Block (Point)
 import qualified Ouroboros.Network.Protocol.BlockFetch.Type as BF
 import qualified Ouroboros.Network.Protocol.TxSubmission2.Type as STX
@@ -51,7 +53,7 @@ tests = checkParallel $ Group "transaction logging integration"
           eb = MkLeiosEb (V.fromList [(b,4),(a,3),(b,4)])
           event :: AnyMessage (LF.LeiosFetch LeiosPoint LeiosEb LeiosTx)
           event = AnyMessageAndAgency LF.SingBlock (LF.MsgLeiosBlock eb)
-          fields = ["txReferenceSchema", "txReferenceDomain", "txReferences"]
+          fields = ["txReferenceSchema", "txReferenceDomain", "txEncoding", "txReferences"]
       forM_ [DMinimal,DNormal,DDetailed,DMaximum] $ \detail -> do
         formatLeiosFetchWith defaultLeiosReferenceLogOptions detail event === forMachine detail event
         let formatted = formatLeiosFetchWith (LeiosReferenceLogOptions True) detail event
@@ -61,16 +63,17 @@ tests = checkParallel $ Group "transaction logging integration"
           | (i,h,n) <- [(0,b,4),(1,a,3),(2,b,4)] ]))
   , ("Leios reply hashes actual bytes without logging the body", withTests 1 $ property $ do
       let tx = MkLeiosTx "abc"
-          eb = MkLeiosEb (V.singleton (hashLeiosTx tx,3))
-          point = MkLeiosPoint 1 (hashLeiosEb eb)
           event :: AnyMessage (LF.LeiosFetch LeiosPoint LeiosEb LeiosTx)
-          event = AnyMessageAndAgency LF.SingBlockTxs (LF.MsgLeiosBlockTxs point [(0,0x8000000000000000)] (V.singleton tx))
+          event = AnyMessageAndAgency LF.SingBlockTxs (LF.MsgLeiosBlockTxs (V.singleton tx))
           formatted = formatLeiosFetchWith (LeiosReferenceLogOptions True) DMaximum event
       prettyTxHash (hashLeiosTx tx) === "bddd813c634239723171ef3fee98579b94964e3bb1cb3e427262c8c068d52319"
       KeyMap.lookup "txReferences" formatted === Just (toJSON
         [object ["serializedTxHash" .= prettyTxHash (hashLeiosTx tx), "bytes" .= (3 :: Int)]])
       assert $ not ("abc" `Text.isInfixOf` Text.pack (show formatted))
-      KeyMap.lookup "txReferenceDomain" formatted === Just (String "blake2b-256-serialized-transaction"))
+      KeyMap.lookup "txReferenceDomain" formatted === Just (String "blake2b-256-serialized-transaction")
+      KeyMap.lookup "txReferenceSchema" formatted === Just (toJSON (2 :: Int))
+      KeyMap.lookup "ebHash" formatted === Nothing
+      KeyMap.lookup "bitmaps" formatted === Nothing)
   , ("legacy peer output at every detail", withTests 1 $ property $
       forM_ [DMinimal, DNormal, DDetailed, DMaximum] $ \detail -> do
         let event = reply [FixtureTx hashA "body"]
@@ -84,11 +87,9 @@ tests = checkParallel $ Group "transaction logging integration"
   , ("Leios reply order and duplicates survive without derived indices", withTests 1 $ property $ do
       let a = MkLeiosTx "abc"
           b = MkLeiosTx "abcd"
-          eb = MkLeiosEb (V.fromList [(hashLeiosTx b,4),(hashLeiosTx a,3),(hashLeiosTx b,4)])
-          point = MkLeiosPoint 1 (hashLeiosEb eb)
           event :: AnyMessage (LF.LeiosFetch LeiosPoint LeiosEb LeiosTx)
           event = AnyMessageAndAgency LF.SingBlockTxs
-            (LF.MsgLeiosBlockTxs point [(0,0xe000000000000000)] (V.fromList [b,a,b]))
+            (LF.MsgLeiosBlockTxs (V.fromList [b,a,b]))
           expected = toJSON [object ["serializedTxHash" .= prettyTxHash (hashLeiosTx t),
                                       "bytes" .= (n :: Int)] | (t,n) <- [(b,4),(a,3),(b,4)]]
       forM_ [DMinimal,DNormal,DDetailed,DMaximum] $ \detail -> do
@@ -96,7 +97,7 @@ tests = checkParallel $ Group "transaction logging integration"
         KeyMap.lookup "txReferences" formatted === Just expected
         encode (formatLeiosFetchWith defaultLeiosReferenceLogOptions detail event) ===
           encode (forMachine detail event)
-        encode (foldr KeyMap.delete formatted ["txReferences","txReferenceSchema","txReferenceDomain"]) ===
+        encode (foldr KeyMap.delete formatted ["txReferences","txReferenceSchema","txReferenceDomain","txEncoding"]) ===
           encode (forMachine detail event))
   , ("Leios send and receive adapters wire the option without changing legacy bytes", withTests 1 $ property $ do
       let tx = MkLeiosTx "abc"

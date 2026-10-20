@@ -2,6 +2,8 @@
 
 The trace dispatcher can retain complete ledger transaction identifiers without repeating transaction dumps in supported mempool and submission events. This is an opt-in representation change, not a change to transaction processing, trace selection, or network protocols.
 
+This branch now targets the w42 prototype. Opt-in identity pairs and Leios references use **schema 2**, identifying `leios-block-transaction` encoding. Historical w40a output used schema 1. Do not feed schema-2 captures to a schema-1 decoder: both the transaction encoding and the fetch-reply context changed upstream.
+
 ## Configuration
 
 Add this top-level object to the node configuration:
@@ -17,7 +19,7 @@ Add this top-level object to the node configuration:
 
 Both settings default to `false`. Omitting the object, or supplying an empty object, preserves legacy behavior. The settings are independent: operators may add full identifiers while retaining transaction dumps, or suppress dumps without adding full identifiers. Unknown fields, explicit nulls, and non-boolean values inside this object are startup errors.
 
-The node reads this policy when constructing its dispatcher tracers. Restart to change it. There is no per-event configuration file access and no new dispatcher detail level. Existing namespace selection, severity filters, detail levels, frequency limits, and backends still apply; this policy does not enable events that those settings disable. It does not apply to the legacy logging system.
+The node reads this policy when constructing its dispatcher tracers. Restart to change it. There is no per-event configuration file access and no new dispatcher detail level. Existing namespace selection, severity filters, detail levels, frequency limits, and backends still apply; this policy does not enable events that those settings disable. This baseline no longer supports the old legacy logging system.
 
 Do not assume an older node recognizes this configuration. Archive the node revision and effective configuration with each dataset. The existing trace-configuration reflection describes dispatcher settings, not this node-local policy.
 
@@ -42,7 +44,8 @@ This increment applies only to decoded transaction objects in `Mempool.AttemptAd
 ```json
 {
   "txIdentity": {
-    "schema": 1,
+    "schema": 2,
+    "encoding": "leios-block-transaction",
     "status": "mapped",
     "ledgerTxId": "<64 lowercase hexadecimal characters>",
     "serializedTxHash": "<64 lowercase hexadecimal characters>",
@@ -80,9 +83,9 @@ The Leios transaction-reference hash identifies serialized transaction bytes, in
 
 The default is false. Unknown fields, explicit nulls, and non-boolean values fail startup. This setting is independent of `TraceOptionTransactions` and detail level, and leaves both existing tracer-construction APIs intact. No collector change is required.
 
-For `LeiosFetch.Remote.Send/Receive.Block`, the nested message gains `txReferenceSchema: 1`, `txReferenceDomain: "blake2b-256-serialized-transaction"`, and `txReferences`: an ordered array of objects with zero-based `index`, full `serializedTxHash`, and `bytes` (serialized transaction length). Existing `ebHash` identifies the body. Order and multiplicity are preserved; consumers must validate them, not sort or deduplicate them.
+For `LeiosFetch.Remote.Send/Receive.Block`, the nested message gains `txReferenceSchema: 2`, `txReferenceDomain: "blake2b-256-serialized-transaction"`, `txEncoding: "leios-block-transaction"`, and `txReferences`: an ordered array of objects with zero-based `index`, full `serializedTxHash`, and `bytes` (serialized transaction length). Existing `ebHash` identifies the body. Order and multiplicity are preserved; consumers must validate them, not sort or deduplicate them.
 
-For `LeiosFetch.Remote.Send/Receive.BlockTxs`, the same metadata accompanies `txReferences` containing full `serializedTxHash` and `bytes` for each actual transaction, in reply order. No transaction body is emitted. Existing request/reply bitmaps and summary fields remain unchanged. Hashing replies adds CPU/allocation work, including for repeated replies: this is an instrumentation cost, not a free cache lookup. Membership hashes are already present in the EB. Measure overhead under the intended workload before using this configuration for performance conclusions.
+For `LeiosFetch.Remote.Send/Receive.BlockTxs`, the same metadata accompanies `txReferences` containing full `serializedTxHash` and `bytes` for each actual transaction, in reply order. No transaction body is emitted. In w42 a reply no longer carries an endorser-block hash, slot, or bitmap; the formatter does not invent these fields. Requests still identify their block and bitmap. Hashing replies adds CPU/allocation work, including for repeated replies: this is an instrumentation cost, not a free cache lookup. Membership hashes are already present in the endorser block. Measure overhead under the intended workload before using this configuration for performance conclusions.
 
 In the pinned consensus implementation, bitmap `(chunk, word)` addresses EB positions `64*chunk + i`, where bit `63-i` selects position `i`. Chunks and selected positions are ascending. Validate the bitmap population, vector bounds, ordered reply hashes and byte sizes before expanding references. Retain the original message identity so expanding one batch into many transaction rows does not multiply message byte totals.
 
@@ -90,9 +93,9 @@ These fields describe observed messages, not cache admission, validation success
 
 ### Schema and upgrade checks
 
-EB means endorser block. Schema 1 adds fields only to the nested `MsgLeiosBlock` and `MsgLeiosBlockTxs` objects, in both directions and at every detail level. Membership entries have `index`, `serializedTxHash`, and `bytes`; reply entries have only `serializedTxHash` and `bytes`. The reply array describes actual supplied bytes, not merely a copy of requested membership. Neither message adds a ledger transaction ID. An empty array means an observed empty vector; an absent field means references were not supplied by that formatter, not an empty vector. Consumers should dispatch on both `txReferenceSchema` and `txReferenceDomain`, rejecting or quarantining unsupported interpretations while retaining the raw message.
+EB means endorser block. Schema 2 adds fields only to the nested `MsgLeiosBlock` and `MsgLeiosBlockTxs` objects, in both directions and at every detail level. Membership entries have `index`, `serializedTxHash`, and `bytes`; reply entries have only `serializedTxHash` and `bytes`. The reply array describes actual supplied bytes, not merely a copy of requested membership. Neither message adds a ledger transaction ID. An empty array means an observed empty vector; an absent field means references were not supplied by that formatter, not an empty vector. Consumers should dispatch on `txReferenceSchema`, `txReferenceDomain`, and `txEncoding`, rejecting or quarantining unsupported interpretations while retaining the raw message.
 
-The reply has no derived `index`: consumers check its hashes and sizes against ascending bitmap positions. Repeating those positions in the reply would not independently establish which outstanding request the node used or whether validation succeeded. That would require additional consensus instrumentation, not another field derived from the echoed bitmap.
+The reply has no derived `index`, block association, or echoed bitmap. Its actual serialized hashes and sizes still support body-receipt evidence after identity resolution. Associating it with a particular request requires verified connection/protocol ordering or additional consensus instrumentation; block membership alone is not a unique request association. Preserve ambiguity across reconnects, missing logs, and transactions shared by multiple endorser blocks.
 
 When upgrading consensus, ledger, node, or CLI dependencies, repeat the bitmap-boundary, reply-order, default-output, and adapter tests. Recheck the source encoding for EB identity and serialized transaction hashing; retain the exact signed transaction files and verify both their ledger IDs with the actual CLI and their serialized hashes/sizes against newly captured replies. Record executable versions/checksums, effective options, dependency pins, and raw evidence. Replaying an old capture qualifies the new analyzer against that capture; it does not qualify a newly deployed formatter. A quiet network with no relevant replies is insufficient evidence, not a successful canary. No upgrade is implied by this checklist.
 
