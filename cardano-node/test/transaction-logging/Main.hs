@@ -45,13 +45,13 @@ main = do
       (error "ID forced") (error "serialization forced") == mempty
   check "enabled identities preserve both hash domains and size" $
     KeyMap.lookup "txIdentity" (transactionIdentityField identities hashA (Just (hashB,202))) ==
-      Just (object ["schema" .= (1 :: Int), "ledgerTxId" .= hashA,
+      Just (object ["schema" .= (2 :: Int), "encoding" .= ("leios-block-transaction" :: Text.Text), "ledgerTxId" .= hashA,
         "serializedDomain" .= ("blake2b-256-serialized-transaction" :: Text.Text),
         "derivation" .= ("node-leios-serialization" :: Text.Text),
         "status" .= ("mapped" :: Text.Text), "serializedTxHash" .= hashB, "bytes" .= (202 :: Int)])
   check "unsupported era is explicit" $
     KeyMap.lookup "txIdentity" (transactionIdentityField identities hashA Nothing) ==
-      Just (object ["schema" .= (1 :: Int), "ledgerTxId" .= hashA,
+      Just (object ["schema" .= (2 :: Int), "encoding" .= ("leios-block-transaction" :: Text.Text), "ledgerTxId" .= hashA,
         "serializedDomain" .= ("blake2b-256-serialized-transaction" :: Text.Text),
         "derivation" .= ("node-leios-serialization" :: Text.Text),
         "status" .= ("unsupported_era" :: Text.Text)])

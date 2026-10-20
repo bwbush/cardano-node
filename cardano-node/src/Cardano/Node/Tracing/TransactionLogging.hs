@@ -118,7 +118,8 @@ transactionIdentityField
 transactionIdentityField opts ledgerId serialized
   | not (includeMempoolIdentityPairs opts) = mempty
   | otherwise = KeyMap.singleton "txIdentity" $ object $
-      [ "schema" .= (1 :: Int)
+      [ "schema" .= (2 :: Int)
+      , "encoding" .= ("leios-block-transaction" :: Text)
       , "ledgerTxId" .= ledgerId
       , "serializedDomain" .= ("blake2b-256-serialized-transaction" :: Text)
       , "derivation" .= ("node-leios-serialization" :: Text)

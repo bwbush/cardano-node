@@ -26,20 +26,14 @@ import           Cardano.Network.NodeToClient (LocalAddress)
 import           Cardano.Network.NodeToClient.Version ()
 import           Cardano.Network.NodeToNode (RemoteAddress)
 import           Cardano.Network.NodeToNode.Version ()
-import           Cardano.Node.Protocol.Types (SomeConsensusProtocol)
+import           Cardano.Network.OrphanInstances ()
 import           Cardano.Node.Queries (NodeKernelData)
 import           Cardano.Node.TraceConstraints
 import           Cardano.Node.Tracing
 import           Cardano.Node.Tracing.Configured (ConfiguredTrace (..))
 import           Cardano.Node.Tracing.Consistency (checkNodeTraceConfiguration')
-import           Cardano.Node.Tracing.Formatting ()
-import           Cardano.Node.Tracing.Render (renderTxId)
 import qualified Cardano.Node.Tracing.StateRep as SR
-import           Cardano.Node.Tracing.Tracers.BlockReplayProgress
-import           Cardano.Node.Tracing.Tracers.ChainDB
-import           Cardano.Node.Tracing.Tracers.Consensus
-import           Cardano.Node.Tracing.Tracers.ForgingStats (calcForgeStats)
-import           Cardano.Node.Tracing.Tracers.KESInfo
+import           Cardano.Node.Tracing.Tracers.ForgingStats (ForgingStateVar, calcForgeStats)
 import           Cardano.Node.Tracing.Tracers.LedgerMetrics ()
 import           Cardano.Node.Tracing.Tracers.NodeToClient ()
 import           Cardano.Node.Tracing.Tracers.NodeToNode (formatLeiosFetchWith)
@@ -61,6 +55,8 @@ import qualified Ouroboros.Consensus.Node.Run as Consensus
 import qualified Ouroboros.Consensus.Node.Tracers as Consensus
 import qualified Ouroboros.Consensus.Storage.ChainDB as ChainDB
 import qualified Ouroboros.Consensus.Storage.LedgerDB as LedgerDB
+import           Ouroboros.Consensus.Tracing
+import           Cardano.Node.Tracing.Tracers.Consensus (formatMempoolWithIdentities, formatLocalTxSubmissionWith)
 import           Ouroboros.Network.Block
 import qualified Ouroboros.Network.BlockFetch.ClientState as BlockFetch
 import           Ouroboros.Network.ConnectionId (ConnectionId)
@@ -70,14 +66,12 @@ import           LeiosDemoTypes (TraceLeiosKernel (..))
 
 import           Codec.CBOR.Read (DeserialiseFailure)
 import           Control.Monad (unless)
-import           "contra-tracer" Control.Tracer (mkTracer)
-import           Cardano.Network.OrphanInstances ()
+import           "contra-tracer" Control.Tracer (nullTracer)
 import           Data.Aeson (ToJSON (..))
 import           Data.Proxy (Proxy (..))
 import           Network.Mux.Trace (TraceLabelPeer (..))
 import qualified Network.Mux.Trace as Mux
 import           Network.Mux.Tracing ()
-
 
 -- | Construct tracers for all system components.
 --
@@ -99,7 +93,7 @@ mkDispatchTracers
   -> Maybe (Trace IO FormattedMessage)
   -> Trace IO DataPoint
   -> TraceConfig
-  -> SomeConsensusProtocol
+  -> ForgingStateVar
   -> IO (Tracers RemoteAddress LocalAddress blk IO)
 
 mkDispatchTracers = mkDispatchTracersWithTransactionLogging defaultTransactionLogOptions
@@ -125,7 +119,7 @@ mkDispatchTracersWithTransactionLogging
   -> Maybe (Trace IO FormattedMessage)
   -> Trace IO DataPoint
   -> TraceConfig
-  -> SomeConsensusProtocol
+  -> ForgingStateVar
   -> IO (Tracers RemoteAddress LocalAddress blk IO)
 mkDispatchTracersWithTransactionLogging =
   mkDispatchTracersWithReferenceLogging defaultLeiosReferenceLogOptions
@@ -151,7 +145,7 @@ mkDispatchTracersWithReferenceLogging
   -> Maybe (Trace IO FormattedMessage)
   -> Trace IO DataPoint
   -> TraceConfig
-  -> SomeConsensusProtocol
+  -> ForgingStateVar
   -> IO (Tracers RemoteAddress LocalAddress blk IO)
 mkDispatchTracersWithReferenceLogging =
   mkDispatchTracersWithIdentityLogging defaultTransactionIdentityLogOptions
@@ -176,9 +170,9 @@ mkDispatchTracersWithIdentityLogging
   -> Maybe (Trace IO FormattedMessage)
   -> Trace IO DataPoint
   -> TraceConfig
-  -> SomeConsensusProtocol
+  -> ForgingStateVar
   -> IO (Tracers RemoteAddress LocalAddress blk IO)
-mkDispatchTracersWithIdentityLogging identityOptions leiosOptions txOptions nodeKernel trBase trForward mbTrEKG trDataPoint trConfig p = do
+mkDispatchTracersWithIdentityLogging identityOptions leiosOptions txOptions nodeKernel trBase trForward mbTrEKG trDataPoint trConfig forgingStateVar = do
 
     configReflection <- emptyConfigReflection
 
@@ -233,6 +227,7 @@ mkDispatchTracersWithIdentityLogging identityOptions leiosOptions txOptions node
 
     !consensusTr <-
       mkConsensusTracers identityOptions txOptions configReflection trBase trForward mbTrEKG trDataPoint trConfig nodeKernel
+        forgingStateVar
 
     !nodeToClientTr <-
       mkNodeToClientTracers txOptions configReflection trBase trForward mbTrEKG trDataPoint trConfig
@@ -263,7 +258,7 @@ mkDispatchTracersWithIdentityLogging identityOptions leiosOptions txOptions node
       {
         chainDBTracer = mkTracer (traceWith chainDBTr')
                       <> mkTracer (traceWith replayBlockTr')
-                      <> mkTracer (SR.traceNodeStateChainDB p nodeStateDP)
+                      <> mkTracer (SR.traceNodeStateChainDB nodeStateDP)
       , consensusTracers = consensusTr
       , churnModeTracer = mkTracer (traceWith churnModeTr)
       , nodeToClientTracers = nodeToClientTr
@@ -301,8 +296,9 @@ mkConsensusTracers :: forall blk.
   -> Trace IO DataPoint
   -> TraceConfig
   -> NodeKernelData blk
+  -> ForgingStateVar
   -> IO (Consensus.Tracers IO (ConnectionId RemoteAddress) (ConnectionId LocalAddress) blk)
-mkConsensusTracers identityOptions txOptions configReflection trBase trForward mbTrEKG _trDataPoint trConfig _nodeKernel = do
+mkConsensusTracers identityOptions txOptions configReflection trBase trForward mbTrEKG _trDataPoint trConfig _nodeKernel forgingStateVar = do
     !chainSyncClientTr  <- mkCardanoTracer
                 trBase trForward mbTrEKG
                  ["ChainSync", "Client"]
@@ -391,7 +387,7 @@ mkConsensusTracers identityOptions txOptions configReflection trBase trForward m
     !forgeStatsTr <- mkCardanoTracer'
                 trBase trForward mbTrEKG
                 ["Forge", "Stats"]
-                calcForgeStats
+                (calcForgeStats forgingStateVar)
     configureTracers configReflection trConfig [forgeStatsTr]
 
     !blockchainTimeTr   <- mkCardanoTracer
@@ -464,6 +460,26 @@ mkConsensusTracers identityOptions txOptions configReflection trBase trForward m
 
     configureTracers configReflection trConfig [txCountersTracer]
 
+    !txPerasCertIn  <-  mkCardanoTracer
+                trBase trForward mbTrEKG
+                ["Peras", "Cert", "Inbound"]
+    configureTracers configReflection trConfig [txPerasCertIn]
+
+    !txPerasCertOut  <-  mkCardanoTracer
+                trBase trForward mbTrEKG
+                ["Peras", "Cert", "Outbound"]
+    configureTracers configReflection trConfig [txPerasCertOut]
+
+    !txPerasVoteIn  <-  mkCardanoTracer
+                trBase trForward mbTrEKG
+                ["Peras", "Vote", "Inbound"]
+    configureTracers configReflection trConfig [txPerasVoteIn]
+
+    !txPerasVoteOut  <-  mkCardanoTracer
+                trBase trForward mbTrEKG
+                ["Peras", "Vote", "Outbound"]
+    configureTracers configReflection trConfig [txPerasVoteOut]
+
     pure $ Consensus.Tracers
       { Consensus.chainSyncClientTracer = mkTracer $
           traceWith chainSyncClientTr
@@ -520,6 +536,16 @@ mkConsensusTracers identityOptions txOptions configReflection trBase trForward m
           traceWith txLogicTracer
       , Consensus.txCountersTracer = mkTracer $
           traceWith txCountersTracer
+      , Consensus.perasCertDiffusionInboundTracer = mkTracer $
+          traceWith txPerasCertIn
+      , Consensus.perasCertDiffusionOutboundTracer = mkTracer $
+          traceWith txPerasCertOut
+      , Consensus.perasVoteDiffusionInboundTracer = mkTracer $
+          traceWith txPerasVoteIn
+      , Consensus.perasVoteDiffusionOutboundTracer = mkTracer $
+          traceWith txPerasVoteOut
+      , Consensus.perasCertInclusionTracer = nullTracer
+      , Consensus.perasVoteForgingTracer = nullTracer
       , Consensus.leiosKernelTracer = mkTracer $
           traceWith leiosKernelTr
           <> traceWith leiosMetricsTr
@@ -624,6 +650,16 @@ mkNodeToNodeTracers leiosOptions txOptions configReflection trBase trForward mbT
                 ["PeerSharing", "Remote"]
     configureTracers configReflection trConfig [peerSharingTracer]
 
+    !txPerasCertDiffusion  <-  mkCardanoTracer
+                trBase trForward mbTrEKG
+                ["Peras", "Cert", "Remote"]
+    configureTracers configReflection trConfig [txPerasCertDiffusion]
+
+    !txPerasVoteDiffusion  <-  mkCardanoTracer
+                trBase trForward mbTrEKG
+                ["Peras", "Vote", "Remote"]
+    configureTracers configReflection trConfig [txPerasVoteDiffusion]
+
     !txLogicTracer  <-  mkCardanoTracer
                 trBase trForward mbTrEKG
                 ["txLogic", "Remote"]
@@ -656,6 +692,10 @@ mkNodeToNodeTracers leiosOptions txOptions configReflection trBase trForward mbT
           traceWith keepAliveTracer
       , NtN.tPeerSharingTracer = mkTracer $
           traceWith peerSharingTracer
+      , NtN.tPerasCertDiffusionTracer = mkTracer $
+          traceWith txPerasCertDiffusion
+      , NtN.tPerasVoteDiffusionTracer = mkTracer $
+          traceWith txPerasVoteDiffusion
       , NtN.tTxLogicTracer = mkTracer $
           traceWith txLogicTracer
       , NtN.tLeiosNotifyTracer = mkTracer $
@@ -849,7 +889,7 @@ mkDiffusionTracers configReflection trBase trForward mbTrEKG _trDataPoint trConf
            traceWith localInboundGovernorTr
        , Diffusion.dtInboundGovernorTransitionTracer = mkTracer $
            traceWith inboundGovernorTransitionsTr
-       , Diffusion.dtLocalConnectionManagerTracer =  mkTracer $
+       , Diffusion.dtLocalConnectionManagerTracer = mkTracer $
            traceWith localConnectionManagerTr
        , Diffusion.dtLocalServerTracer = mkTracer $
            traceWith localServerTr
