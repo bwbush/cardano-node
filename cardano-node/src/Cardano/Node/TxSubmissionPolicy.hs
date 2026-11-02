@@ -14,7 +14,8 @@ module Cardano.Node.TxSubmissionPolicy
 
 import           Cardano.Network.NodeToClient (LocalAddress)
 import           Cardano.Network.NodeToNode (RemoteAddress, txSubmissionMiniProtocolNum)
-import           Control.Concurrent.Class.MonadSTM (MonadSTM, atomically, retry)
+import           Control.Monad (forever)
+import           Control.Monad.Class.MonadTimer.SI (MonadDelay, threadDelay)
 import qualified Network.Mux as Mux
 import qualified Ouroboros.Consensus.Node as Node
 import           Ouroboros.Network.Diffusion.Types (Applications (..))
@@ -44,7 +45,7 @@ runWithTxSubmissionPolicy True = \args stdArgs -> do
 -- policies, and peer selection intact. Map all negotiated duplex versions and
 -- protocol temperatures, replacing exactly the TxSubmission2 responder.
 suppressInboundTxSubmission
-  :: MonadSTM m
+  :: MonadDelay m
   => Bool
   -> Applications na nv nd la lv ld flags m a
   -> Applications na nv nd la lv ld flags m a
@@ -56,7 +57,7 @@ suppressInboundTxSubmission True apps =
        }
 
 suppressInboundMiniProtocol
-  :: MonadSTM m
+  :: MonadDelay m
   => MiniProtocol Mux.InitiatorResponderMode ic rc bytes m a b
   -> MiniProtocol Mux.InitiatorResponderMode ic rc bytes m a b
 suppressInboundMiniProtocol protocol
@@ -69,4 +70,6 @@ suppressInboundMiniProtocol protocol
   -- mempool writer. Keep the mini-protocol registered and cancellable by mux:
   -- returning immediately would terminate the connection and affect sync.
   -- TxSubmission2 is pull-based, so a compliant peer waits for our requests.
-  parked = MiniProtocolCb $ \_ _ -> atomically retry
+  -- A timer keeps the wait alive even through major garbage collection. An
+  -- unrooted @atomically retry@ can raise BlockedIndefinitelyOnSTM instead.
+  parked = MiniProtocolCb $ \_ _ -> forever (threadDelay 60)
