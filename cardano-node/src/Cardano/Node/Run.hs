@@ -64,6 +64,7 @@ import           Cardano.Node.Tracing.Tracers.ForgingStats (ForgingStateVar, new
                    noteForgingState)
 import           Cardano.Node.Tracing.Tracers.NodeVersion (getNodeVersion)
 import           Cardano.Node.Tracing.Tracers.Startup (getStartupInfo)
+import           Cardano.Node.TxSubmissionPolicy (runWithTxSubmissionPolicy)
 import           Cardano.Node.Types
 import           Cardano.Prelude (FatalError (..), bool, (:~:) (..))
 import           Cardano.Slotting.Slot (WithOrigin (..))
@@ -531,7 +532,7 @@ handleSimpleNode blockType runP tracers forgingStateVar nc cmdPc networkMagic on
                 nc
         in
         withAsync (rpcServerLoop (startupTracer tracers) (rpcTracer tracers) rpcConfigVar networkMagic nodeKernelAccessRef) $ \_ ->
-          Node.run
+          runWithTxSubmissionPolicy (ncSuppressInboundTxSubmission nc)
             nodeArgs {
                 rnNodeKernelHook = \registry nodeKernel -> do
                   -- reinstall `SIGHUP` handler

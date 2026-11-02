@@ -95,6 +95,7 @@ library
                         Cardano.Node.Protocol.Types
                         Cardano.Node.Queries
                         Cardano.Node.Run
+                        Cardano.Node.TxSubmissionPolicy
                         Cardano.Node.Startup
                         Cardano.Node.STM
                         Cardano.Node.Testnet.Paths
@@ -250,6 +251,23 @@ test-suite transaction-logging-integration
                       , typed-protocols
                       , vector
   other-modules:        Test.Cardano.Tracing.NewTracing.TransactionLogging
+
+test-suite tx-submission-policy
+  import:               project-config
+  hs-source-dirs:       test/tx-submission-policy
+  main-is:              Main.hs
+  type:                 exitcode-stdio-1.0
+  ghc-options:          -threaded
+  build-depends:        base
+                      , aeson
+                      , bytestring
+                      , cardano-node
+                      , containers
+                      , directory
+                      , filepath
+                      , optparse-applicative
+                      , ouroboros-network:{ouroboros-network, framework}
+                      , temporary
 
 test-suite cardano-config-compare-test
   import:               project-config

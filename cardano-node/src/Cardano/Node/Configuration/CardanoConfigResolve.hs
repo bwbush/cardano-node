@@ -58,9 +58,11 @@ import           Cardano.Node.Types (ConfigYamlFilePath (..))
 
 import           Control.Exception (Exception (..))
 import qualified Control.Exception as Exception
-import           Data.Aeson (Value (..))
+import           Data.Aeson (Value (..), withObject, (.:!))
+import           Data.Aeson.Types (parseEither)
 import qualified Data.Aeson.KeyMap as KeyMap
 import           Data.List (isPrefixOf)
+import           Data.Maybe (fromMaybe)
 import           Data.Monoid (Last (..))
 import qualified Data.Yaml as Yaml
 import qualified Options.Applicative as Opt
@@ -117,7 +119,7 @@ buildNodeConfiguration ::
 buildNodeConfiguration crossCheck partialConf = do
   classifyConfigurationFile configFp >>= \case
     LegacyDialect -> buildFromLegacy crossCheck partialConf configFp
-    CardanoConfigDialect -> buildFromCardanoConfig configFp
+    CardanoConfigDialect -> buildFromCardanoConfig partialConf configFp
  where
   -- An absent @--config@ falls back to the node's default path, exactly as
   -- 'parseNodeConfigurationFP' does.
@@ -166,8 +168,16 @@ buildFromLegacy crossCheck partialConf configFp = do
 -- | Resolve an envelope configuration with @cardano-config@ alone and map it to
 -- the node's 'NodeConfiguration'. Unlike the cross-check on the legacy path,
 -- every failure here is fatal: there is no second parser to fall back to.
-buildFromCardanoConfig :: FilePath -> IO ResolvedNodeConfiguration
-buildFromCardanoConfig configFp = do
+buildFromCardanoConfig :: PartialNodeConfiguration -> FilePath -> IO ResolvedNodeConfiguration
+buildFromCardanoConfig partialConf configFp = do
+  -- This fork-only, startup policy lives at the root of the selected file,
+  -- outside cardano-config's Configuration envelope. Do not silently drop it
+  -- when that parser handles the rest of the file. CLI overrides the file.
+  value <- Yaml.decodeFileThrow configFp
+  filePolicy <- either (Exception.throwIO . NodeConfigurationError) pure $
+    parseEither (withObject "node configuration" (.:! "SuppressInboundTxSubmission")) value
+  let suppressInbound = fromMaybe False $ getLast $
+        Last filePolicy <> pncSuppressInboundTxSubmission partialConf
   cliArgs <-
     cardanoConfigCliArgs configFp
       >>= either (Exception.throwIO . NodeConfigurationError) pure
@@ -180,7 +190,7 @@ buildFromCardanoConfig configFp = do
       cardanoConfigToNodeConfiguration cfgNc
   pure
     ResolvedNodeConfiguration
-      { rncConfiguration = nc
+      { rncConfiguration = nc { ncSuppressInboundTxSubmission = suppressInbound }
       , rncTraceConfig = Just (Cfg.tracingConfiguration cfgNc)
       , rncReport =
           "cardano-config: resolved the configuration (the node's own parser was not run: this"
@@ -308,7 +318,11 @@ cardanoConfigCliArgs configFp =
 -- line, and the two parsers can then be given the same one.
 cardanoConfigCliLayer :: FilePath -> [String] -> Either String Cfg.CliArgs
 cardanoConfigCliLayer configFp flags =
-  case Opt.execParserPure Opt.defaultPrefs (Opt.info Cfg.parseCliArgs mempty) flags of
+  -- These fork-only flags have already been parsed by nodeCLIParser and are
+  -- applied separately; cardano-config must still parse all its own flags.
+  case Opt.execParserPure Opt.defaultPrefs (Opt.info Cfg.parseCliArgs mempty)
+         (filter (`notElem` ["--suppress-inbound-tx-submission",
+                            "--no-suppress-inbound-tx-submission"]) flags) of
     Opt.Success cli -> Right (onConfigFile cli)
     Opt.CompletionInvoked _ -> Right (Cfg.defaultCliArgs configFp)
     Opt.Failure failure ->

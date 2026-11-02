@@ -207,6 +207,7 @@ data NodeConfiguration
        , ncRpcConfig :: RpcConfig
 
        , ncTxSubmissionLogicVersion :: TxSubmissionLogicVersion
+       , ncSuppressInboundTxSubmission :: !Bool
        , ncTxSubmissionInitDelay :: TxSubmissionInitDelay
 
        -- Leios
@@ -311,6 +312,7 @@ data PartialNodeConfiguration
        , pncResponderCoreAffinityPolicy :: !(Last ResponderCoreAffinityPolicy)
 
        , pncTxSubmissionLogicVersion :: !(Last TxSubmissionLogicVersion)
+       , pncSuppressInboundTxSubmission :: !(Last Bool)
        , pncTxSubmissionInitDelay :: !(Last TxSubmissionInitDelay)
 
          -- gRPC
@@ -425,6 +427,7 @@ instance FromJSON PartialNodeConfiguration where
 
       pncRpcConfig <- parsePartialRpcConfig v
 
+      pncSuppressInboundTxSubmission <- Last <$> v .:! "SuppressInboundTxSubmission"
       txSubmissionLogicVersion <- Last <$> v .:? "TxSubmissionLogicVersion"
       let parseInitDelay =
             maybe (pncTxSubmissionInitDelay defaultPartialNodeConfiguration) (fmap TxSubmissionInitDelay)
@@ -480,6 +483,7 @@ instance FromJSON PartialNodeConfiguration where
            , pncResponderCoreAffinityPolicy
            , pncRpcConfig
            , pncTxSubmissionLogicVersion = txSubmissionLogicVersion
+           , pncSuppressInboundTxSubmission
            , pncTxSubmissionInitDelay
            , pncLeiosDbConfig
            , pncLeiosMinOfferLead
@@ -857,6 +861,7 @@ defaultPartialNodeConfiguration =
     , pncRpcConfig = mempty
 
     , pncTxSubmissionLogicVersion = Last $ Just TxSubmissionLogicV1
+    , pncSuppressInboundTxSubmission = Last (Just False)
     , pncTxSubmissionInitDelay = Last $ Just defaultTxSubmissionInitDelay
 
     , pncLeiosDbConfig = Last (Just (LeiosDbSQLite))
@@ -983,6 +988,7 @@ makeNodeConfiguration pnc = do
   ncResponderCoreAffinityPolicy <- lastToEither "Missing ResponderCoreAffinityPolicy" $ pncResponderCoreAffinityPolicy pnc
 
   ncTxSubmissionLogicVersion <- lastToEither "Missing TxSubmissionLogicVersion" $ pncTxSubmissionLogicVersion pnc
+  ncSuppressInboundTxSubmission <- lastToEither "Missing SuppressInboundTxSubmission" $ pncSuppressInboundTxSubmission pnc
   ncTxSubmissionInitDelay <- lastToEither "Missing TxSubmissionInitDelay" $ pncTxSubmissionInitDelay pnc
 
   let deadlineTargets =
@@ -1067,6 +1073,7 @@ makeNodeConfiguration pnc = do
              , ncResponderCoreAffinityPolicy
              , ncRpcConfig
              , ncTxSubmissionLogicVersion
+             , ncSuppressInboundTxSubmission
              , ncTxSubmissionInitDelay
              , ncLeiosDbConfig
              , ncLeiosMinOfferLead = getLast $ pncLeiosMinOfferLead pnc

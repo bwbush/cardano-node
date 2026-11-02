@@ -77,6 +77,10 @@ nodeRunParser = do
                          <$> parseStartAsNonProducingNodeDeprecated
                          <*> Cfg.parseStartAsNonProducingNode
 
+  suppressInbound <- Last <$> optional
+    (flag' True (long "suppress-inbound-tx-submission" <> help "Do not request or admit peer-diffused transactions; keep outbound serving and local submission.")
+     <|> flag' False (long "no-suppress-inbound-tx-submission" <> help "Allow peer-diffused transactions (override configuration)."))
+
   -- Node Address
   nIPv4Address <- lastOption (NodeHostIPv4Address <$> Cfg.parseHostIPv4Addr)
   nIPv6Address <- lastOption (NodeHostIPv6Address <$> Cfg.parseHostIPv6Addr)
@@ -161,6 +165,7 @@ nodeRunParser = do
                  , rpcEndpoint
                  }
            , pncTxSubmissionLogicVersion = mempty
+           , pncSuppressInboundTxSubmission = suppressInbound
            , pncTxSubmissionInitDelay = mempty
            , pncLeiosDbConfig = mempty
            , pncLeiosMinOfferLead = mempty
