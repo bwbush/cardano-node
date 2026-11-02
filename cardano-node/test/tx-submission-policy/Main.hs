@@ -111,10 +111,16 @@ checkCallbacks enabled = do
       run cb' = runMiniProtocolCb cb' (error "context forced") (error "channel touched")
       applications :: Versions Int () a -> [a]
       applications vs = [versionApplication v () | v <- Map.elems (getVersions vs)]
-  forM_ (applications (daApplicationInitiatorResponderMode apps)) $ \b ->
+  check "negotiated versions preserved" $
+    Map.keys (getVersions (daApplicationInitiatorResponderMode apps)) == [1,2]
+  forM_ (applications (daApplicationInitiatorResponderMode apps)) $ \b -> do
+    check "all protocols retained in original temperature/order" $
+      map (map miniProtocolNum) (toList b) ==
+        map (map MiniProtocolNum) [[2,3,4,14,15],[8],[10]]
     forM_ (concat (toList b)) $ \p -> do
       let MiniProtocolNum n = miniProtocolNum p
       check "protocol retains start strategy" (miniProtocolStart p == StartOnDemand)
+      check "protocol retains ingress limit" (maximumIngressQueue (miniProtocolLimits p) == 4096)
       case miniProtocolRun p of
         InitiatorAndResponderProtocol outbound inbound -> do
           before <- readIORef called

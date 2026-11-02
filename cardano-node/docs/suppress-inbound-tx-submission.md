@@ -33,6 +33,45 @@ nix build --accept-flake-config .#cardano-node \
 
 The policy suite uses both existing configuration dialect fixtures, the real CLI parser and startup configuration resolver, ON/OFF precedence and invalid-value checks, negotiated versions, and callback execution. It repeats the sequence in one process and verifies that the blocked responder is cancellable without invoking its original handler or channel. These are configuration and wiring tests, not a substitute for a standalone node diffusion smoke test.
 
+For the bounded three-node devnet, supply the candidate, an existing w42 instrumented binary for parity, and the w43-compatible CLI. This creates fresh keys and disposable balances on magic 1414, connects only over loopback, submits two transactions there, and stops every process it starts. It never uses a live-network socket or treasury. The directory must not already exist.
+
+```sh
+python3 cardano-node/test/tx-submission-policy/smoke.py \
+  --node /path/to/candidate/bin/cardano-node \
+  --baseline /path/to/w42/bin/cardano-node \
+  --cli /path/to/compatible/bin/cardano-cli \
+  --config-template cardano-node/test/cardano-config-compare/config/config.json \
+  --root /path/to/new-devnet-directory
+```
+
+The runner first checks block synchronization with suppression enabled, then pauses forging while checking peer exclusion and local outward diffusion. It restarts the target without the flag to check stock admission, resumes forging to check inclusion, and compares schema-2 identity payloads for the same transaction against w42. It records every query outcome; an unsuccessful or unknown mempool query is an error, never evidence of absence. The genesis security parameter leaves enough ledger forecast horizon for the deliberate pause. Receipts and generated data stay outside the source tree.
+
+The separate [passive sync runner](../test/tx-submission-policy/passive-sync.py) verifies the magic-164 October 18 Shelley genesis SHA-256 before connecting to an existing loopback relay. It starts a candidate with suppression enabled on a distinct port and scratch database, reads at least five historical blocks, then shuts down. It submits no transactions. This checks startup/sync, not catch-up to the current network tip. Run it only where such a passive check is authorized:
+
+```sh
+python3 cardano-node/test/tx-submission-policy/passive-sync.py \
+  --node /path/to/candidate/bin/cardano-node \
+  --cli /path/to/compatible/bin/cardano-cli \
+  --config /path/to/running-relay/network/config.json \
+  --root /path/to/new-passive-directory --peer-port 3010 --port 34611
+```
+
+Neither smoke is a load test or evidence for unattended resource sizing. Full fleet rollout, database replacement, and network migration are outside these runners.
+
+## Rebase and source provenance
+
+The rebase recreates the prior baseline merge against the exact w43 node commit, preserving the entire 13-file local diff byte for byte (SHA-256 of `git diff 2d6a2a66415cc1d58c18ed3ee83ce719713fc97d 910d13d90d70783094f5713d6f785f8fa824edfe`: `839dd029de775bbf284f58856f1c2943f451a2654faa0ed39ef67d7efdf5c542`). Earlier instrumentation history, including the w40a merge, remains reachable. The recreated merge resolves the same six instrumentation-file conflicts using the already-qualified w42 content; w43 changes only dependency pins in `cabal.project`. The new capability is in subsequent commits.
+
+The investigation's external source inputs can be recreated from these immutable revisions. Fetch the stated URL and compare its SHA-256; do not replace a pin with a branch tip:
+
+| Input | SHA-256 |
+|---|---|
+| `https://raw.githubusercontent.com/input-output-hk/ouroboros-leios/63d75a54f76bbdde507fe28cdf0079530cb9ff2a/flake.lock` | `5ccbc8d52f8c875ea7c48f66e5b379c7421d8532979b7e58d4bbca690ff8d761` |
+| `https://codeload.github.com/IntersectMBO/ouroboros-consensus/tar.gz/a337d69f4946d5a1b20ecaaeae635dd47822e3d2` | `50248e167f0cd74eeba3bb95e10f04b24d2cce6a8449044305b0d7d046131d74` |
+| `https://codeload.github.com/IntersectMBO/ouroboros-network/tar.gz/f0243fe6d962e922ab2c8e131543eba3d78748cb` | `278d6d1134ec1fa8a60e9737a92836d4a34245b077105f3e8c434d2a18ffcbca` |
+
+The baseline formatter source is Git commit `910d13d90d70783094f5713d6f785f8fa824edfe` in the existing fork, with its own pinned `flake.lock` and `cabal.project`. Build it in an independent checkout to reproduce the comparator. Generated devnet inputs are recreated by the smoke command rather than committed; genesis and signed-transaction checksums are in its receipts. Archive retention, when these receipts are placed in the project archive, is 360 days; the source pins and generation commands are required for later reruns.
+
 ## Sources
 
 - [Policy and diffusion adapter — node implementation](../src/Cardano/Node/TxSubmissionPolicy.hs).

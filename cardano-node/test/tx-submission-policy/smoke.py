@@ -111,7 +111,9 @@ def main():
         handles.append(log)
         processes[name] = subprocess.Popen(argv, env=env, stdout=log, stderr=subprocess.STDOUT)
         emit("started", node=name, pid=processes[name].pid, argv=argv)
-        wait(name + " socket", lambda: (directory / "node.socket").is_socket())
+        # A previous clean shutdown can leave the socket pathname present.
+        # Require the new process to answer, not merely a filesystem entry.
+        wait(name + " socket", lambda: (directory / "node.socket").is_socket() and query(name, "tip"))
 
     def mempool_has(name, txid):
         value = query(name, "tx-mempool", "tx-exists", txid)
@@ -134,7 +136,8 @@ def main():
             "--fee", 1000000, "--out-file", body)
         cli("transaction", "sign", "--tx-body-file", body, "--signing-key-file", keys / "utxo.skey",
             "--testnet-magic", MAGIC, "--out-file", signed)
-        txid = cli("transaction", "txid", "--tx-file", signed).stdout.strip()
+        txid = json.loads(cli("transaction", "txid", "--tx-file", signed).stdout)["txhash"]
+        assert len(txid) == 64 and all(c in "0123456789abcdef" for c in txid)
         cli("transaction", "submit", *net(name), "--tx-file", signed)
         emit("submitted_devnet_only", node=name, txid=txid, signed_sha256=hashlib.sha256(signed.read_bytes()).hexdigest())
         return txid
@@ -153,7 +156,9 @@ def main():
         genesis_path = root / "genesis" / "shelley-genesis.json"
         genesis = json.loads(genesis_path.read_text())
         assert genesis["networkMagic"] == MAGIC
-        genesis.update(activeSlotsCoeff=0.2, slotLength=0.2, epochLength=5000, securityParam=5,
+        # Keep the ledger forecast horizon longer than the deliberate forging
+        # pause; a tiny security parameter would prevent the producer resuming.
+        genesis.update(activeSlotsCoeff=0.2, slotLength=0.2, epochLength=5000, securityParam=50,
                        slotsPerKESPeriod=10000, updateQuorum=2)
         genesis["protocolParams"]["protocolVersion"] = dict(major=12, minor=0)
         write(genesis_path, genesis)
